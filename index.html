@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Payload Parser - Ethereum Transaction Decoder</title>
+  
+  <!-- External Dependencies -->
+  <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js"></script>
+  
+  <!-- Styles -->
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <h1>Payload Parser</h1>
+    </header>
+    
+    <!-- Input Section -->
+    <section class="input-section">
+      <div class="input-group">
+        <textarea 
+          id="payload-input" 
+          class="input-field" 
+          placeholder="Supported formats:
+• Raw payload:      0x...
+• Etherscan TX:     https://etherscan.io/tx/0x...
+• Tenderly VNet:    https://dashboard.tenderly.co/explorer/vnet/{id}/tx/0x...
+• Tenderly Fork:    https://dashboard.tenderly.co/{account}/{project}/fork/{id}/simulation/{id}
+• Tenderly Public:  https://dashboard.tenderly.co/public/{account}/{project}/simulator/{id}"
+        ></textarea>
+      </div>
+      
+      <!-- Controls -->
+      <div class="controls">
+        <div class="chain-select-group">
+          <span class="chain-select-label">Chain:</span>
+          <select id="chain-select" class="chain-select"></select>
+        </div>
+        
+        <button id="parse-btn" class="btn btn-primary">
+          Parse Data
+        </button>
+        
+        <button id="sig-toggle-btn" class="btn btn-secondary">
+          Unknown Function? Register Signature
+        </button>
+      </div>
+      
+      <!-- Signature Registration Form -->
+      <div id="sig-form-container" class="signature-section hidden">
+        <div class="sig-instructions">
+          <p>
+            If a function is showing as "unknown", you can register its signature here.
+            Supports functions, errors, and events.
+          </p>
+          <p><strong>Supported formats:</strong></p>
+          <pre>// Functions
+transfer(address,uint256)
+function approve(address,uint256)
+
+// Errors (EIP-6093 style)
+error ERC20InsufficientBalance(address,uint256,uint256)
+
+// Events
+event Transfer(address indexed,address indexed,uint256)
+
+// Or use markdown table:
+| Function Name | Sighash | Signature |
+| transfer | a9059cbb | transfer(address,uint256) |</pre>
+        </div>
+        
+        <textarea 
+          id="sig-input" 
+          class="sig-input" 
+          placeholder="Paste function/error/event signature(s) here..."
+        ></textarea>
+        
+        <div class="sig-controls">
+          <button id="sig-submit-btn" class="btn btn-primary">Submit</button>
+          <span id="sig-status" class="sig-status"></span>
+        </div>
+      </div>
+    </section>
+    
+    <!-- Output Section -->
+    <section id="output" class="output-section">
+      <p class="no-params">Enter a payload or transaction link and click "Parse Data" to decode.</p>
+    </section>
+  </div>
+  
+  <!-- Application Script -->
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Payload Decoder - Test Runner</title>
+  <style>
+    :root {
+      --bg-color: #1e1e2e;
+      --card-bg: #2a2a3e;
+      --text-color: #e0e0e0;
+      --accent-color: #7c3aed;
+      --success-color: #10b981;
+      --error-color: #ef4444;
+      --border-color: #3a3a4e;
+    }
+    
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    
+    body {
+      font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
+      background: var(--bg-color);
+      color: var(--text-color);
+      padding: 2rem;
+      min-height: 100vh;
+    }
+    
+    h1 {
+      color: var(--accent-color);
+      margin-bottom: 1rem;
+      font-size: 1.5rem;
+    }
+    
+    .controls {
+      margin-bottom: 1.5rem;
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    
+    button {
+      background: var(--accent-color);
+      color: white;
+      border: none;
+      padding: 0.75rem 1.5rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 600;
+      transition: all 0.2s;
+    }
+    
+    button:hover {
+      filter: brightness(1.1);
+      transform: translateY(-1px);
+    }
+    
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+    
+    button.secondary {
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+    }
+    
+    #summary {
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 1rem;
+      margin-bottom: 1.5rem;
+      display: none;
+    }
+    
+    #summary.show {
+      display: block;
+    }
+    
+    #summary.passed {
+      border-color: var(--success-color);
+    }
+    
+    #summary.failed {
+      border-color: var(--error-color);
+    }
+    
+    .summary-title {
+      font-size: 1.25rem;
+      margin-bottom: 0.5rem;
+    }
+    
+    .summary-stats {
+      display: flex;
+      gap: 2rem;
+    }
+    
+    .stat {
+      display: flex;
+      flex-direction: column;
+    }
+    
+    .stat-value {
+      font-size: 1.5rem;
+      font-weight: bold;
+    }
+    
+    .stat-label {
+      font-size: 0.75rem;
+      color: #888;
+    }
+    
+    .stat.passed .stat-value {
+      color: var(--success-color);
+    }
+    
+    .stat.failed .stat-value {
+      color: var(--error-color);
+    }
+    
+    #output {
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 1rem;
+      max-height: 600px;
+      overflow-y: auto;
+    }
+    
+    .log-entry {
+      padding: 0.25rem 0;
+      font-size: 0.875rem;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    
+    .log-entry.pass {
+      color: var(--success-color);
+    }
+    
+    .log-entry.fail {
+      color: var(--error-color);
+    }
+    
+    .log-entry.info {
+      color: #888;
+    }
+    
+    .log-entry.header {
+      color: var(--accent-color);
+      font-weight: bold;
+      margin-top: 0.5rem;
+    }
+    
+    .separator {
+      border-top: 1px dashed var(--border-color);
+      margin: 0.5rem 0;
+    }
+    
+    .loading {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border: 2px solid #fff;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-left: 0.5rem;
+    }
+    
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <h1>Payload Decoder - Test Runner</h1>
+  
+  <div class="controls">
+    <button id="runAllBtn" onclick="runAllTests()">Run All Tests</button>
+    <button id="runDecoderBtn" class="secondary" onclick="runSingleSuite('decoder')">Decoder Tests</button>
+    <button id="runMulticallBtn" class="secondary" onclick="runSingleSuite('multicall')">Multicall Tests</button>
+    <button id="runParsersBtn" class="secondary" onclick="runSingleSuite('parsers')">Parser Tests</button>
+    <button class="secondary" onclick="clearOutput()">Clear</button>
+  </div>
+  
+  <div id="summary">
+    <div class="summary-title">Test Results</div>
+    <div class="summary-stats">
+      <div class="stat total">
+        <span class="stat-value" id="totalCount">0</span>
+        <span class="stat-label">Total</span>
+      </div>
+      <div class="stat passed">
+        <span class="stat-value" id="passedCount">0</span>
+        <span class="stat-label">Passed</span>
+      </div>
+      <div class="stat failed">
+        <span class="stat-value" id="failedCount">0</span>
+        <span class="stat-label">Failed</span>
+      </div>
+    </div>
+  </div>
+  
+  <div id="output">
+    <div class="log-entry info">Click "Run All Tests" to start...</div>
+  </div>
+  
+  <script>
+    // Store for test results
+    let testResults = {
+      total: 0,
+      passed: 0,
+      failed: 0
+    };
+    
+    // Override console.log to capture test output
+    const originalLog = console.log;
+    const originalError = console.error;
+    
+    function log(message, type = 'info') {
+      const output = document.getElementById('output');
+      const entry = document.createElement('div');
+      entry.className = `log-entry ${type}`;
+      entry.textContent = message;
+      output.appendChild(entry);
+      output.scrollTop = output.scrollHeight;
+    }
+    
+    function setupConsoleCapture() {
+      console.log = function(...args) {
+        const message = args.join(' ');
+        originalLog.apply(console, args);
+        
+        if (message.startsWith('✓')) {
+          log(message, 'pass');
+          testResults.passed++;
+          testResults.total++;
+        } else if (message.startsWith('---')) {
+          log(message, 'header');
+        } else if (message.includes('='.repeat(10))) {
+          const separator = document.createElement('div');
+          separator.className = 'separator';
+          document.getElementById('output').appendChild(separator);
+        } else if (message.includes('Tests:')) {
+          // Skip the built-in summary, we show our own
+        } else {
+          log(message, 'info');
+        }
+      };
+      
+      console.error = function(...args) {
+        const message = args.join(' ');
+        originalError.apply(console, args);
+        
+        if (message.startsWith('✗')) {
+          log(message, 'fail');
+          testResults.failed++;
+          testResults.total++;
+        } else {
+          log(message, 'fail');
+        }
+      };
+    }
+    
+    function restoreConsole() {
+      console.log = originalLog;
+      console.error = originalError;
+    }
+    
+    function updateSummary() {
+      const summary = document.getElementById('summary');
+      summary.classList.add('show');
+      summary.classList.remove('passed', 'failed');
+      summary.classList.add(testResults.failed === 0 ? 'passed' : 'failed');
+      
+      document.getElementById('totalCount').textContent = testResults.total;
+      document.getElementById('passedCount').textContent = testResults.passed;
+      document.getElementById('failedCount').textContent = testResults.failed;
+    }
+    
+    function clearOutput() {
+      document.getElementById('output').innerHTML = 
+        '<div class="log-entry info">Ready to run tests...</div>';
+      document.getElementById('summary').classList.remove('show');
+      testResults = { total: 0, passed: 0, failed: 0 };
+    }
+    
+    function setButtonsDisabled(disabled) {
+      document.querySelectorAll('button').forEach(btn => {
+        btn.disabled = disabled;
+      });
+    }
+    
+    async function runAllTests() {
+      clearOutput();
+      setButtonsDisabled(true);
+      
+      const btn = document.getElementById('runAllBtn');
+      const originalText = btn.textContent;
+      btn.innerHTML = 'Running...<span class="loading"></span>';
+      
+      setupConsoleCapture();
+      log('Starting All Tests...', 'header');
+      
+      try {
+        // Import and run decoder tests
+        log('\n=== DECODER TESTS ===\n', 'header');
+        const decoderModule = await import('./test-decoder.js');
+        await decoderModule.runAllTests();
+        
+        // Import and run multicall tests
+        log('\n=== MULTICALL TESTS ===\n', 'header');
+        const multicallModule = await import('./test-multicall.js');
+        await multicallModule.runAllTests();
+        
+        // Import and run parser tests
+        log('\n=== PARSER TESTS ===\n', 'header');
+        const parsersModule = await import('./test-parsers.js');
+        await parsersModule.runAllTests();
+        
+      } catch (e) {
+        log(`Error running tests: ${e.message}`, 'fail');
+        originalError('Test error:', e);
+      }
+      
+      restoreConsole();
+      updateSummary();
+      setButtonsDisabled(false);
+      btn.textContent = originalText;
+    }
+    
+    async function runSingleSuite(suite) {
+      clearOutput();
+      setButtonsDisabled(true);
+      
+      const btn = document.getElementById(`run${capitalize(suite)}Btn`);
+      const originalText = btn.textContent;
+      btn.innerHTML = 'Running...<span class="loading"></span>';
+      
+      setupConsoleCapture();
+      log(`Starting ${capitalize(suite)} Tests...`, 'header');
+      
+      try {
+        const module = await import(`./test-${suite}.js`);
+        await module.runAllTests();
+      } catch (e) {
+        log(`Error running ${suite} tests: ${e.message}`, 'fail');
+        originalError('Test error:', e);
+      }
+      
+      restoreConsole();
+      updateSummary();
+      setButtonsDisabled(false);
+      btn.textContent = originalText;
+    }
+    
+    function capitalize(str) {
+      return str.charAt(0).toUpperCase() + str.slice(1);
+    }
+  </script>
+</body>
+</html>
