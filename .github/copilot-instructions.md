@@ -130,6 +130,7 @@ Key points:
 2. Handle CORS issues appropriately for static deployment
 3. Implement proper error handling with user-friendly messages
 4. Support recursive parsing depth for nested multicall/safe transactions
+5. **Version Management**: When modifying HTML/CSS/JS files, update the version query parameter (e.g., `?v=1.0.1` → `?v=1.0.2`) in HTML file references to bust browser cache
 
 ## Working Style
 

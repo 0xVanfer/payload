@@ -7,6 +7,7 @@
 import { state } from './state.js';
 import { escapeHtml, debounce, isValidAddress } from './utils.js';
 import { initParamAddressSelect, sortAddressesBySymbol, formatAddressOption } from './address.js';
+import { getContractMethods, hasContractABI } from './abi-fetcher.js';
 import {
   PRESET_CATEGORIES,
   getAllPresetMethods,
@@ -61,21 +62,46 @@ export function initMethodSelector() {
 
 /**
  * Show method suggestions based on query.
+ * Priority order: Contract ABI methods > Session methods > Preset methods
  * @param {string} query - The search query
  */
 function showMethodSuggestions(query) {
   const suggestions = document.getElementById('method-suggestions');
   if (!suggestions) return;
   
-  // Search presets and session methods
-  const presetResults = searchPresetMethods(query);
+  const lowerQuery = query.toLowerCase();
+  
+  // Get contract ABI methods for current target address (highest priority)
+  let abiResults = [];
+  if (state.currentTargetAddress && hasContractABI(state.currentTargetAddress)) {
+    const contractMethods = getContractMethods(state.currentTargetAddress);
+    abiResults = contractMethods.filter(m => 
+      m.signature.toLowerCase().includes(lowerQuery) ||
+      m.name.toLowerCase().includes(lowerQuery)
+    );
+  }
+  
+  // Search session methods
   const sessionResults = state.sessionMethods.filter(m => 
-    m.signature.toLowerCase().includes(query.toLowerCase()) ||
-    m.name.toLowerCase().includes(query.toLowerCase())
+    m.signature.toLowerCase().includes(lowerQuery) ||
+    m.name.toLowerCase().includes(lowerQuery)
   );
   
-  // Combine and dedupe
-  const allResults = [...sessionResults, ...presetResults].slice(0, 10);
+  // Search presets
+  const presetResults = searchPresetMethods(query);
+  
+  // Combine results with priority: ABI > Session > Preset
+  // Dedupe by signature
+  const seen = new Set();
+  const allResults = [];
+  
+  for (const method of [...abiResults, ...sessionResults, ...presetResults]) {
+    if (!seen.has(method.signature)) {
+      seen.add(method.signature);
+      allResults.push(method);
+    }
+    if (allResults.length >= 15) break; // Show more results to accommodate ABI methods
+  }
   
   if (allResults.length === 0) {
     hideSuggestions();
@@ -85,13 +111,16 @@ function showMethodSuggestions(query) {
   // Build suggestions HTML
   let html = '';
   for (const method of allResults) {
+    const isFromABI = abiResults.includes(method);
     const isSession = sessionResults.includes(method);
+    
     html += `
-      <div class="suggestion-item" data-signature="${escapeHtml(method.signature)}">
+      <div class="suggestion-item${isFromABI ? ' suggestion-abi' : ''}" data-signature="${escapeHtml(method.signature)}">
         <span class="suggestion-name">${escapeHtml(method.name)}</span>
         <span class="suggestion-signature">${escapeHtml(method.signature)}</span>
         ${method.categoryLabel ? `<span class="suggestion-category">${escapeHtml(method.categoryLabel)}</span>` : ''}
-        ${isSession ? '<span class="suggestion-badge">Recent</span>' : ''}
+        ${isFromABI ? '<span class="suggestion-badge suggestion-badge-abi">ABI</span>' : ''}
+        ${isSession && !isFromABI ? '<span class="suggestion-badge">Recent</span>' : ''}
       </div>
     `;
   }
@@ -166,6 +195,19 @@ function populateMethodSelect(category) {
   
   if (!category) return;
   
+  // Check if this is a contract ABI category
+  if (category.startsWith('contract-')) {
+    const address = category.replace('contract-', '');
+    const methods = getContractMethods(address);
+    for (const method of methods) {
+      const option = document.createElement('option');
+      option.value = method.signature;
+      option.textContent = `${method.name} - ${method.description}`;
+      methodSelect.appendChild(option);
+    }
+    return;
+  }
+  
   const methods = getMethodsByCategory(category);
   for (const method of methods) {
     const option = document.createElement('option');
@@ -173,6 +215,48 @@ function populateMethodSelect(category) {
     option.textContent = `${method.name} - ${method.description}`;
     methodSelect.appendChild(option);
   }
+}
+
+/**
+ * Add or update a contract ABI category in the preset selector.
+ * Automatically switches to show the contract's methods.
+ * @param {string} address - The contract address
+ * @param {string} [label] - Optional label for the category
+ */
+export function addContractABICategory(address, label) {
+  const categorySelect = document.getElementById('preset-category');
+  if (!categorySelect) return;
+  
+  const normalizedAddress = address.toLowerCase();
+  const categoryKey = `contract-${normalizedAddress}`;
+  
+  // Check if category already exists
+  let option = categorySelect.querySelector(`option[value="${categoryKey}"]`);
+  
+  if (!option) {
+    // Create new option
+    option = document.createElement('option');
+    option.value = categoryKey;
+    
+    // Build label: use symbol if available, otherwise truncated address
+    const symbol = state.addressSymbols[normalizedAddress];
+    const displayLabel = label || (symbol ? `📄 ${symbol} Contract` : `📄 ${address.slice(0, 8)}...${address.slice(-6)}`);
+    option.textContent = displayLabel;
+    
+    // Insert at the top (after the default option)
+    const firstOption = categorySelect.querySelector('option');
+    if (firstOption && firstOption.nextSibling) {
+      categorySelect.insertBefore(option, firstOption.nextSibling);
+    } else {
+      categorySelect.appendChild(option);
+    }
+  }
+  
+  // Select the category
+  categorySelect.value = categoryKey;
+  
+  // Populate methods
+  populateMethodSelect(categoryKey);
 }
 
 /**

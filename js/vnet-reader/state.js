@@ -17,7 +17,9 @@ export const state = {
   sessionAddresses: [],    // Custom addresses used in this session
   callHistory: [],         // History of calls made in this session
   currentMethod: null,     // Parsed method currently selected
-  initialized: false       // Whether initialization is complete
+  initialized: false,      // Whether initialization is complete
+  contractABIs: {},        // Map of address -> { abi, methods, loadedAt }
+  currentTargetAddress: null  // Currently selected target address (for ABI method prioritization)
 };
 
 /**
@@ -34,4 +36,6 @@ export function resetState() {
   state.callHistory = [];
   state.currentMethod = null;
   state.initialized = false;
+  state.contractABIs = {};
+  state.currentTargetAddress = null;
 }

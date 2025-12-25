@@ -7,6 +7,8 @@
 import { state } from './state.js';
 import { isValidAddress, formatAddress, debounce } from './utils.js';
 import { getAddressExplorerUrl } from './connection.js';
+import { loadContractABI, hasContractABI } from './abi-fetcher.js';
+import { addContractABICategory } from './method.js';
 
 /**
  * Initialize the address selector with discovered addresses.
@@ -47,28 +49,71 @@ export async function initAddressSelector() {
   }
   
   // Handle select change
-  select.addEventListener('change', (e) => {
+  select.onchange = async (e) => {
     if (e.target.value) {
       input.value = e.target.value;
       updateExplorerButton();
+      // Load contract ABI for selected address
+      await onTargetAddressChanged(e.target.value);
     }
-  });
+  };
   
-  // Handle input change
-  input.addEventListener('input', debounce((e) => {
+  // Handle input change with ABI loading
+  const debouncedInputHandler = debounce(async (e) => {
     updateExplorerButton();
-  }, 300));
+    const address = e.target.value.trim();
+    
+    // Sync select dropdown with input value
+    syncSelectWithInput(select, address);
+    
+    if (isValidAddress(address)) {
+      await onTargetAddressChanged(address);
+    }
+  }, 300);
+  
+  input.oninput = debouncedInputHandler;
   
   // Initialize explorer button
   if (explorerBtn) {
-    explorerBtn.addEventListener('click', () => {
+    explorerBtn.onclick = () => {
       const address = input.value.trim();
       if (isValidAddress(address)) {
         const url = getAddressExplorerUrl(address);
         if (url) window.open(url, '_blank');
       }
-    });
+    };
     updateExplorerButton();
+  }
+}
+
+/**
+ * Sync the select dropdown value with the input value.
+ * @param {HTMLSelectElement} select - The select element
+ * @param {string} address - The address value
+ */
+function syncSelectWithInput(select, address) {
+  if (!select || !address) {
+    if (select) select.value = '';
+    return;
+  }
+  
+  const normalizedAddress = address.toLowerCase();
+  
+  // Find matching option
+  const options = select.querySelectorAll('option');
+  let found = false;
+  
+  for (const option of options) {
+    if (option.value.toLowerCase() === normalizedAddress) {
+      select.value = option.value;
+      found = true;
+      break;
+    }
+  }
+  
+  // If not found, reset to default
+  if (!found) {
+    select.value = '';
   }
 }
 
@@ -235,5 +280,87 @@ export function addToSessionAddresses(address) {
     
     // Update address dropdowns
     updateAddressDropdowns();
+  }
+}
+
+/**
+ * Handle target address change - update state and load contract ABI.
+ * Shows a loading indicator while fetching ABI.
+ * @param {string} address - The new target address
+ */
+export async function onTargetAddressChanged(address) {
+  if (!address || !isValidAddress(address)) return;
+  
+  // Update current target address in state
+  state.currentTargetAddress = address.toLowerCase();
+  
+  // Check if ABI already loaded
+  if (hasContractABI(address)) {
+    console.log('[Address] ABI already loaded for', address);
+    showABIStatus(address, 'loaded');
+    // Switch to the contract's category
+    addContractABICategory(address);
+    return;
+  }
+  
+  // Show loading status
+  showABIStatus(address, 'loading');
+  
+  // Try to load ABI
+  const success = await loadContractABI(address);
+  
+  if (success) {
+    showABIStatus(address, 'loaded');
+    // Add contract to category selector and switch to it
+    addContractABICategory(address);
+  } else {
+    showABIStatus(address, 'not-found');
+  }
+}
+
+/**
+ * Show ABI loading status near the address input.
+ * @param {string} address - The contract address
+ * @param {'loading'|'loaded'|'not-found'} status - The status to show
+ */
+function showABIStatus(address, status) {
+  const container = document.querySelector('.address-input-wrapper');
+  if (!container) return;
+  
+  // Remove existing status
+  const existing = container.querySelector('.abi-status');
+  if (existing) existing.remove();
+  
+  // Create status element
+  const statusEl = document.createElement('span');
+  statusEl.className = 'abi-status';
+  
+  switch (status) {
+    case 'loading':
+      statusEl.textContent = '⏳';
+      statusEl.title = 'Loading contract ABI...';
+      statusEl.classList.add('abi-status-loading');
+      break;
+    case 'loaded':
+      statusEl.textContent = '✓';
+      statusEl.title = 'Contract ABI loaded - methods available in search';
+      statusEl.classList.add('abi-status-loaded');
+      break;
+    case 'not-found':
+      statusEl.textContent = '';
+      statusEl.title = 'Contract not verified or ABI not available';
+      statusEl.classList.add('abi-status-not-found');
+      break;
+  }
+  
+  container.appendChild(statusEl);
+  
+  // Auto-hide after a few seconds for non-loading states
+  if (status !== 'loading') {
+    setTimeout(() => {
+      if (statusEl.parentNode) {
+        statusEl.classList.add('abi-status-fade');
+      }
+    }, 3000);
   }
 }

@@ -342,6 +342,55 @@
   margin-top: 2px;
 }
 
+/* ABI Method Badge */
+.suggestion-badge-abi {
+  color: var(--color-success);
+  background: var(--color-success-light);
+}
+
+/* ABI Method Highlight */
+.suggestion-abi {
+  background: linear-gradient(90deg, var(--color-success-light) 0%, transparent 100%);
+  border-left: 3px solid var(--color-success);
+  padding-left: calc(var(--spacing-sm) - 3px);
+}
+
+.suggestion-abi:hover {
+  background: linear-gradient(90deg, var(--color-success-light) 0%, var(--color-primary-light) 100%);
+}
+
+/* ===== ABI Status Indicator ===== */
+.abi-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  margin-left: var(--spacing-xs);
+  transition: opacity 0.3s;
+}
+
+.abi-status-loading {
+  animation: pulse 1s infinite;
+}
+
+.abi-status-loaded {
+  color: var(--color-success);
+}
+
+.abi-status-not-found {
+  color: var(--color-text-secondary);
+  opacity: 0.6;
+}
+
+.abi-status-fade {
+  opacity: 0.3;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
 /* Preset Selectors */
 .preset-row {
   display: flex;
