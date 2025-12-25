@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VNet Reader - Contract State Reader</title>
+  
+  <!-- External Dependencies -->
+  <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js"></script>
+  
+  <!-- Styles - inherit variables from main styles -->
+  <link rel="stylesheet" href="css/styles.css?v=1.0.0">
+  <link rel="stylesheet" href="css/vnet-reader.css?v=1.0.0">
+</head>
+<body class="vnet-reader-page">
+  <div class="container">
+    <!-- Header -->
+    <header>
+      <h1>📖 VNet Reader</h1>
+      <a href="index.html" class="back-link">← Back to Parser</a>
+    </header>
+    
+    <main>
+      <!-- RPC Info Section -->
+      <section class="vnet-section">
+        <h2>Connection</h2>
+        <div class="rpc-info">
+          <div class="rpc-info-item">
+            <span class="label">RPC:</span>
+            <span id="rpc-url" class="value">Not connected</span>
+            <span id="connection-status" class="connection-status disconnected" title="Disconnected"></span>
+          </div>
+          <div class="rpc-info-item">
+            <span class="label">Chain:</span>
+            <span id="chain-id" class="value">-</span>
+          </div>
+          <div class="rpc-info-item">
+            <a id="explorer-link" href="#" target="_blank" class="explorer-link disabled" title="Open Block Explorer">
+              🔗 Explorer
+            </a>
+          </div>
+        </div>
+      </section>
+    
+      <!-- Call Builder Section -->
+      <section class="vnet-section">
+        <h2>Contract Call</h2>
+        
+        <div class="call-builder">
+          <!-- Target Address -->
+          <div class="input-group compact">
+            <label class="input-label" for="target-address">Target Address</label>
+            <div class="input-row">
+              <div class="address-input-wrapper">
+                <input 
+                  type="text" 
+                  id="target-address" 
+                  class="input-field" 
+                  placeholder="0x... or select from discovered addresses"
+                  autocomplete="off"
+                >
+                <select id="target-address-select" class="select-field address-select">
+                  <option value="">-- Select --</option>
+                </select>
+                <button id="address-explorer-btn" class="btn btn-icon disabled" title="View on Explorer" disabled>
+                  🔗
+                </button>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Method Input -->
+          <div class="input-group compact">
+            <label class="input-label" for="method-input">Method Signature</label>
+            <div class="input-row">
+              <div class="method-input-wrapper">
+                <input 
+                  type="text" 
+                  id="method-input" 
+                  class="input-field" 
+                  placeholder="e.g., balanceOf(address) or search preset methods"
+                  autocomplete="off"
+                >
+                <div id="method-suggestions" class="hidden"></div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Preset Selectors -->
+          <div class="input-group compact">
+            <label class="input-label">Quick Presets</label>
+            <div class="preset-row">
+              <select id="preset-category" class="select-field preset-category-select">
+                <option value="">-- Category --</option>
+              </select>
+              <select id="preset-method" class="select-field preset-method-select">
+                <option value="">-- Method --</option>
+              </select>
+            </div>
+          </div>
+          
+          <!-- Dynamic Parameters -->
+          <div class="params-container">
+            <h3>Parameters</h3>
+            <div id="params-list">
+              <p class="no-params-hint">Enter a method signature to see required parameters</p>
+            </div>
+          </div>
+          
+          <!-- Action Buttons -->
+          <div class="action-buttons">
+            <button id="call-btn" class="btn btn-primary">
+              🔍 Call Contract
+            </button>
+            <button id="clear-btn" class="btn btn-secondary">
+              Clear
+            </button>
+          </div>
+        </div>
+      </section>
+      
+      <!-- Results Section -->
+      <section class="vnet-section">
+        <h2>Result</h2>
+        <div id="call-result">
+          <p class="result-placeholder">Call result will appear here</p>
+        </div>
+      </section>
+      
+      <!-- Call History Section -->
+      <section class="vnet-section">
+        <div class="history-header">
+          <h2>Session History</h2>
+          <button id="clear-history-btn" class="btn btn-small btn-secondary">Clear</button>
+        </div>
+        <div id="call-history">
+          <p class="history-placeholder">No calls made yet</p>
+        </div>
+      </section>
+    </main>
+  </div>
+  
+  <!-- Application Script -->
+  <script type="module" src="js/vnet-reader/index.js?v=1.0.1"></script>
+</body>
+</html>

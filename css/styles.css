@@ -185,6 +185,19 @@ body {
   background: #e1bee7;
 }
 
+.btn-vnet {
+  background: #10b981;
+  color: white;
+}
+
+.btn-vnet:hover {
+  background: #059669;
+}
+
+.btn-vnet.hidden {
+  display: none;
+}
+
 /* ===== Signature Form ===== */
 .signature-section {
   margin-top: var(--spacing-md);

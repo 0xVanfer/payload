@@ -41,7 +41,8 @@ const state = {
   currentChainId: '1',
   lastParsedPayload: null,
   isSignatureFormVisible: false,
-  lastLinkInfo: null  // Stores from/to/chainId when parsing links
+  lastLinkInfo: null,  // Stores from/to/chainId when parsing links
+  vnetInfo: null       // Stores VNet info: { vnetId, vnetRpcUrl, chainId }
 };
 
 /**
@@ -139,6 +140,12 @@ function initEventListeners() {
   if (sigToggle) {
     sigToggle.addEventListener('click', toggleSignatureForm);
   }
+  
+  // VNet Reader button
+  const vnetBtn = document.getElementById('vnet-reader-btn');
+  if (vnetBtn) {
+    vnetBtn.addEventListener('click', handleVnetReaderClick);
+  }
 }
 
 /**
@@ -182,8 +189,10 @@ async function handleParse() {
     let topLevelFrom = null;
     let isFromLink = false;
     
-    // Reset link info
+    // Reset link info and vnet info
     state.lastLinkInfo = null;
+    state.vnetInfo = null;
+    updateVnetButtonVisibility();
     
     // Check if input is a link
     if (isParsableLink(input)) {
@@ -191,8 +200,21 @@ async function handleParse() {
       isFromLink = true;
       const linkResult = await parseLink(input);
       
+      // Save VNet info if available, even if parsing failed
+      // This allows "Read on VNet" button to work for VNet links without valid transactions
+      if (linkResult.vnetId && linkResult.vnetRpcUrl) {
+        state.vnetInfo = {
+          vnetId: linkResult.vnetId,
+          vnetRpcUrl: linkResult.vnetRpcUrl,
+          chainId: linkResult.chainId || '1'
+        };
+        log('info', 'app', 'VNet info detected', state.vnetInfo);
+      }
+      
       if (!linkResult.success) {
         outputDiv.innerHTML = `<div class="error-message">Failed to parse link: ${linkResult.error}</div>`;
+        // Show VNet button even on parse failure if VNet info is available
+        updateVnetButtonVisibility();
         return;
       }
       
@@ -292,6 +314,10 @@ async function handleParse() {
     // This runs asynchronously after the main render is complete
     await fetchAndDisplayContractInfo(chainId);
     
+    // Update VNet button visibility AFTER contract info fetch completes
+    // This ensures symbols are fully loaded before showing the button
+    updateVnetButtonVisibility();
+    
   } catch (e) {
     log('error', 'app', 'Parse error', { error: e.message, stack: e.stack });
     outputDiv.innerHTML = `<div class="error-message">Parse error: ${e.message}</div>`;
@@ -369,6 +395,9 @@ async function handleMultiplePayloads(payloads, chainId, label, outputDiv) {
   
   // Post-processing: Fetch and display contract info
   await fetchAndDisplayContractInfo(chainId);
+  
+  // Update VNet button visibility after all processing is complete
+  updateVnetButtonVisibility();
 }
 
 /**
@@ -521,6 +550,54 @@ async function handleSignatureSubmit() {
   }
 }
 
+/**
+ * Update the visibility of the VNet Reader button.
+ * Shows the button only when vnetInfo is available.
+ */
+function updateVnetButtonVisibility() {
+  const btn = document.getElementById('vnet-reader-btn');
+  if (!btn) return;
+  
+  if (state.vnetInfo && state.vnetInfo.vnetRpcUrl) {
+    btn.classList.remove('hidden');
+  } else {
+    btn.classList.add('hidden');
+  }
+}
+
+/**
+ * Handle click on the VNet Reader button.
+ * Opens the VNet Reader page with RPC URL and collected addresses.
+ */
+function handleVnetReaderClick() {
+  if (!state.vnetInfo || !state.vnetInfo.vnetRpcUrl) {
+    log('warn', 'app', 'VNet Reader clicked but no VNet info available');
+    return;
+  }
+  
+  // Collect all addresses from the address collector
+  const addresses = getAllAddresses();
+  
+  // Build URL parameters
+  const params = new URLSearchParams();
+  params.set('rpc', state.vnetInfo.vnetRpcUrl);
+  params.set('chainId', state.vnetInfo.chainId || '1');
+  
+  // Pass addresses as JSON array (will be decoded on the other side)
+  if (addresses.length > 0) {
+    params.set('addresses', JSON.stringify(addresses));
+  }
+  
+  // Open the VNet Reader page
+  const readerUrl = `vnet-reader.html?${params.toString()}`;
+  window.open(readerUrl, '_blank');
+  
+  log('info', 'app', 'Opening VNet Reader', { 
+    rpc: state.vnetInfo.vnetRpcUrl, 
+    addressCount: addresses.length 
+  });
+}
+
 // Initialize when DOM is ready
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', init);
@@ -534,5 +611,6 @@ export {
   handleParse,
   toggleSignatureForm,
   handleSignatureSubmit,
+  handleVnetReaderClick,
   state
 };

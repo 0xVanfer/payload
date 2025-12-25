@@ -9,7 +9,7 @@
   <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js"></script>
   
   <!-- Styles -->
-  <link rel="stylesheet" href="css/styles.css">
+  <link rel="stylesheet" href="css/styles.css?v=1.0.0">
 </head>
 <body>
   <div class="container">
@@ -47,6 +47,10 @@
         
         <button id="sig-toggle-btn" class="btn btn-secondary">
           Unknown Function? Register Signature
+        </button>
+        
+        <button id="vnet-reader-btn" class="btn btn-vnet hidden" title="Read contract state on Tenderly VNet">
+          📖 Read on VNet
         </button>
       </div>
       
@@ -98,6 +102,6 @@ event Transfer(address indexed,address indexed,uint256)
   </div>
   
   <!-- Application Script -->
-  <script type="module" src="js/app.js"></script>
+  <script type="module" src="js/app.js?v=1.0.1"></script>
 </body>
 </html>
