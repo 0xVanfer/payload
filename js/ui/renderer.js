@@ -3,6 +3,7 @@
  * 
  * Handles rendering of decoded payload results into HTML.
  * Manages the main result table and recursive bytes decoding display.
+ * Integrates with address collector for post-render symbol lookup.
  */
 
 import { log, checksumAddress } from '../core/abi-utils.js';
@@ -20,6 +21,11 @@ import {
   hexToDecimal 
 } from './value-format.js';
 import { initCopyHandlers, escapeHtml } from './copy-utils.js';
+import { 
+  resetAddressCollector, 
+  registerAddress, 
+  generateAddressElementId 
+} from '../core/address-collector.js';
 
 /**
  * Storage for uint256 elements that need calculator binding.
@@ -28,6 +34,7 @@ let uint256Elements = [];
 
 /**
  * Render the main results table from decoded payload.
+ * Resets all counters and collectors before rendering.
  * 
  * @param {Array} decodedResults - Array of decoded call results
  * @param {string|number} chainId - The chain ID for explorer links
@@ -38,6 +45,10 @@ function renderResults(decodedResults, chainId) {
   
   // Reset counters for fresh IDs
   resetCounters();
+  
+  // Reset address collector for fresh address tracking
+  resetAddressCollector();
+  
   uint256Elements = [];
   
   const explorerUrl = getExplorerUrl(chainId);
@@ -90,10 +101,15 @@ function renderResultRow(item, explorerUrl, index) {
   
   if (item.calledAddress) {
     const address = checksumAddress(item.calledAddress);
+    
+    // Generate unique ID for address tracking
+    const addrElementId = generateAddressElementId();
+    registerAddress(address, addrElementId);
+    
     const link = explorerUrl 
       ? `<a href="${explorerUrl}/address/${address}" target="_blank" rel="noopener">${address}</a>`
       : address;
-    html += `<div class="called-address">${link}</div>`;
+    html += `<div class="called-address" id="${addrElementId}" data-address="${address}">${link}</div>`;
   }
   
   if (item.error) {
@@ -270,11 +286,24 @@ function renderRecursiveTable(decoded, explorerUrl) {
   `;
   
   for (const item of decoded) {
+    // Build called address HTML with tracking
+    let calledAddressHtml = '';
+    if (item.calledAddress) {
+      const address = checksumAddress(item.calledAddress);
+      const addrElementId = generateAddressElementId();
+      registerAddress(address, addrElementId);
+      
+      const link = explorerUrl 
+        ? `<a href="${explorerUrl}/address/${address}" target="_blank" rel="noopener">${address}</a>`
+        : address;
+      calledAddressHtml = `<div class="called-address" id="${addrElementId}" data-address="${address}">${link}</div>`;
+    }
+    
     html += `
       <tr>
         <td class="col-function">
           <div class="function-name">${escapeHtml(item.functionName || 'unknown')}</div>
-          ${item.calledAddress ? `<div class="called-address">${escapeHtml(item.calledAddress)}</div>` : ''}
+          ${calledAddressHtml}
         </td>
         <td class="col-params">
     `;

@@ -364,6 +364,17 @@ body {
   text-decoration: underline;
 }
 
+/**
+ * Token symbol display next to addresses.
+ * Shown after multicall lookup for ERC20 tokens.
+ */
+.address-symbol {
+  color: var(--color-primary);
+  font-size: 13px;
+  font-weight: 500;
+  margin-left: 2px;
+}
+
 .bytes-value {
   max-height: 200px;
   overflow: auto;

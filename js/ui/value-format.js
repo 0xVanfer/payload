@@ -3,9 +3,16 @@
  * 
  * Provides functions for formatting different value types
  * for display in the UI.
+ * 
+ * Integrates with address-collector for tracking addresses
+ * across the rendered output.
  */
 
 import { checksumAddress } from '../core/abi-utils.js';
+import { 
+  registerAddress, 
+  generateAddressElementId 
+} from '../core/address-collector.js';
 
 /**
  * Format a uint256 value with decimal places.
@@ -128,17 +135,27 @@ function createUint256Display(value, id) {
 
 /**
  * Generate HTML for an address with copy button.
+ * Automatically registers the address with the address collector
+ * for post-processing (symbol lookup, etc.).
+ * 
  * @param {string} address - The address
  * @param {string} explorerUrl - Explorer base URL
- * @param {string} id - Unique ID for the button
- * @returns {string} HTML string
+ * @param {string} id - Unique ID for the copy button
+ * @returns {string} HTML string with address display container
  */
 function createAddressDisplay(address, explorerUrl, id) {
   const checksummed = checksumAddress(address);
   const link = formatAddressAsLink(checksummed, explorerUrl);
   
+  // Generate a unique ID for the address container element
+  // This ID is used to locate and update the element with symbol info
+  const containerId = generateAddressElementId();
+  
+  // Register this address with its container ID for later symbol lookup
+  registerAddress(checksummed, containerId);
+  
   return `
-    <span class="address-display">
+    <span class="address-display" id="${containerId}" data-address="${checksummed}">
       ${link}
       <button type="button" class="copy-btn" id="${id}" data-value="${checksummed}">copy</button>
     </span>

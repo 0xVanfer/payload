@@ -3,6 +3,10 @@
  * 
  * Initializes the payload parser application and handles
  * user interactions.
+ * 
+ * Post-processing features:
+ * - Fetches contract info (symbol, decimals) for all discovered addresses
+ * - Updates rendered addresses with token symbols
  */
 
 import { log } from './core/abi-utils.js';
@@ -13,12 +17,21 @@ import {
   submitSignatures 
 } from './core/signature.js';
 import { parseLink, isParsableLink } from './parsers/index.js';
-import { getAllChainIds, getChainName, getExplorerUrl } from './config/chains.js';
+import { getAllChainIds, getChainName, getExplorerUrl, getRpcUrl } from './config/chains.js';
 import { 
   renderResults, 
   renderRecursiveBytes, 
   initializeInteractivity 
 } from './ui/renderer.js';
+import { 
+  getAllAddresses, 
+  getElementIdsForAddress,
+  getAddressStats 
+} from './core/address-collector.js';
+import { 
+  fetchContractInfo, 
+  updateAddressDisplays 
+} from './core/contract-info.js';
 
 /**
  * Application state.
@@ -202,9 +215,68 @@ async function handleParse() {
     state.lastParsedPayload = payload;
     log('info', 'app', 'Parse complete', { resultCount: decoded.length, nestedCount: nestedBytes.length });
     
+    // Post-processing: Fetch and display contract info for all addresses
+    // This runs asynchronously after the main render is complete
+    await fetchAndDisplayContractInfo(chainId);
+    
   } catch (e) {
     log('error', 'app', 'Parse error', { error: e.message, stack: e.stack });
     outputDiv.innerHTML = `<div class="error-message">Parse error: ${e.message}</div>`;
+  }
+}
+
+/**
+ * Fetch contract info (symbol, decimals) for all collected addresses
+ * and update the rendered display with token symbols.
+ * 
+ * This function runs after the main render is complete. It:
+ * 1. Gets all unique addresses from the address collector
+ * 2. Fetches symbol/decimals via multicall
+ * 3. Updates the DOM elements with symbol information
+ * 
+ * @param {string|number} chainId - The chain ID to query
+ * @returns {Promise<void>}
+ */
+async function fetchAndDisplayContractInfo(chainId) {
+  // Get all collected addresses
+  const addresses = getAllAddresses();
+  const stats = getAddressStats();
+  
+  if (addresses.length === 0) {
+    log('debug', 'app', 'No addresses to fetch contract info for');
+    return;
+  }
+  
+  log('info', 'app', 'Fetching contract info', { 
+    uniqueAddresses: stats.uniqueCount, 
+    totalElements: stats.totalElements,
+    chainId 
+  });
+  
+  // Check if RPC is available for this chain
+  const rpcUrl = getRpcUrl(chainId);
+  if (!rpcUrl) {
+    log('warn', 'app', 'No RPC URL configured for chain, skipping contract info fetch', { chainId });
+    return;
+  }
+  
+  try {
+    // Fetch contract info using multicall
+    const contractInfoMap = await fetchContractInfo(addresses, chainId);
+    
+    // Update the DOM with symbol information
+    updateAddressDisplays(contractInfoMap, getElementIdsForAddress);
+    
+    // Log results
+    const withSymbol = Array.from(contractInfoMap.values()).filter(info => info.symbol).length;
+    log('info', 'app', 'Contract info fetch complete', { 
+      total: addresses.length, 
+      withSymbol 
+    });
+    
+  } catch (e) {
+    // Non-fatal error - the main parsing result is still displayed
+    log('error', 'app', 'Failed to fetch contract info', { error: e.message });
   }
 }
 

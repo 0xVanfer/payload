@@ -3,77 +3,101 @@
  * 
  * Provides chain ID to explorer URL mapping and chain metadata.
  * Used for generating links to block explorers and identifying networks.
+ * Also provides RPC URLs for on-chain queries (e.g., contract info lookup).
  */
 
 /**
  * Chain configuration object mapping chain IDs to their metadata.
- * Each entry contains the explorer URL and human-readable name.
- * @type {Object.<string, {explorer: string, name: string}>}
+ * Each entry contains:
+ * - explorer: Block explorer base URL
+ * - name: Human-readable chain name
+ * - rpc: Public RPC endpoint URL for on-chain queries
+ * 
+ * RPC URLs are public endpoints. For production use, consider using
+ * private RPC providers or rate-limited endpoints.
+ * 
+ * @type {Object.<string, {explorer: string, name: string, rpc: string}>}
  */
 const CHAIN_CONFIG = {
   '1': {
     explorer: 'https://etherscan.io',
-    name: 'Ethereum Mainnet'
+    name: 'Ethereum Mainnet',
+    rpc: 'https://eth.drpc.org'
   },
   '10': {
     explorer: 'https://optimistic.etherscan.io',
-    name: 'Optimism'
+    name: 'Optimism',
+    rpc: 'https://optimism.drpc.org'
   },
   '56': {
     explorer: 'https://bscscan.com',
-    name: 'BNB Smart Chain'
+    name: 'BNB Smart Chain',
+    rpc: 'https://bsc.drpc.org'
   },
   '137': {
     explorer: 'https://polygonscan.com',
-    name: 'Polygon'
+    name: 'Polygon',
+    rpc: 'https://polygon.drpc.org'
   },
   '239': {
     explorer: 'https://explorer.tac.build',
-    name: 'TAC'
+    name: 'TAC',
+    rpc: 'https://turin.rpc.tac.build'
   },
   '1329': {
     explorer: 'https://seitrace.com',
-    name: 'Sei'
+    name: 'Sei',
+    rpc: 'https://evm-rpc.sei-apis.com'
   },
   '4200': {
     explorer: 'https://scan.merlinchain.io',
-    name: 'Merlin Chain'
+    name: 'Merlin Chain',
+    rpc: 'https://rpc.merlinchain.io'
   },
   '5000': {
     explorer: 'https://mantlescan.xyz',
-    name: 'Mantle'
+    name: 'Mantle',
+    rpc: 'https://mantle.drpc.org'
   },
   '8453': {
     explorer: 'https://basescan.org',
-    name: 'Base'
+    name: 'Base',
+    rpc: 'https://base.drpc.org'
   },
   '9745': {
     explorer: 'https://plasmascan.to',
-    name: 'Plasma'
+    name: 'Plasma',
+    rpc: 'https://rpc.plasma.nexus'
   },
   '42161': {
     explorer: 'https://arbiscan.io',
-    name: 'Arbitrum One'
+    name: 'Arbitrum One',
+    rpc: 'https://arbitrum.drpc.org'
   },
   '43114': {
     explorer: 'https://snowscan.xyz',
-    name: 'Avalanche C-Chain'
+    name: 'Avalanche C-Chain',
+    rpc: 'https://avalanche.drpc.org'
   },
   '80094': {
     explorer: 'https://berascan.com',
-    name: 'Berachain'
+    name: 'Berachain',
+    rpc: 'https://rpc.berachain.com'
   },
   '81457': {
     explorer: 'https://blastscan.io',
-    name: 'Blast'
+    name: 'Blast',
+    rpc: 'https://blast.drpc.org'
   },
   '534352': {
     explorer: 'https://scrollscan.com',
-    name: 'Scroll'
+    name: 'Scroll',
+    rpc: 'https://scroll.drpc.org'
   },
   '11155111': {
     explorer: 'https://sepolia.etherscan.io',
-    name: 'Sepolia Testnet'
+    name: 'Sepolia Testnet',
+    rpc: 'https://sepolia.drpc.org'
   }
 };
 
@@ -114,11 +138,23 @@ function isChainSupported(chainId) {
   return String(chainId) in CHAIN_CONFIG;
 }
 
+/**
+ * Get the RPC URL for a given chain ID.
+ * Used for on-chain queries like contract info lookup.
+ * @param {string|number} chainId - The chain ID
+ * @returns {string} The RPC URL, or empty string if not configured
+ */
+function getRpcUrl(chainId) {
+  const config = CHAIN_CONFIG[String(chainId)];
+  return config ? config.rpc : '';
+}
+
 // Export for ES modules
 export {
   CHAIN_CONFIG,
   getExplorerUrl,
   getChainName,
   getAllChainIds,
-  isChainSupported
+  isChainSupported,
+  getRpcUrl
 };

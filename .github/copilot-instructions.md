@@ -123,7 +123,10 @@ Key points:
 
 ## Development Guidelines
 
-1. Always close HTTP servers after debugging sessions
+1. Always close HTTP servers after debugging sessions using:
+    ```bash
+    pkill -f "python.*http.server" 2>/dev/null; echo "Server stopped"
+    ```
 2. Handle CORS issues appropriately for static deployment
 3. Implement proper error handling with user-friendly messages
 4. Support recursive parsing depth for nested multicall/safe transactions
