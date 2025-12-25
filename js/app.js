@@ -156,6 +156,7 @@ async function handleParse() {
     let isMultiplePayloads = false;
     let payloads = null;
     let multipleLabel = '';
+    let topLevelTo = null;
     
     // Check if input is a link
     if (isParsableLink(input)) {
@@ -166,6 +167,9 @@ async function handleParse() {
         outputDiv.innerHTML = `<div class="error-message">Failed to parse link: ${linkResult.error}</div>`;
         return;
       }
+      
+      // Store the top-level called address
+      topLevelTo = linkResult.to || null;
       
       // Check if result contains multiple payloads
       if (linkResult.isMultiple && linkResult.payloads) {
@@ -181,7 +185,7 @@ async function handleParse() {
         if (linkResult.chainId) {
           chainId = String(linkResult.chainId);
         }
-        log('info', 'app', 'Link parsed successfully', { chainId, payloadLength: payload.length });
+        log('info', 'app', 'Link parsed successfully', { chainId, payloadLength: payload.length, to: topLevelTo });
       }
       
       document.getElementById('chain-select').value = chainId;
@@ -202,7 +206,7 @@ async function handleParse() {
     
     // Decode the payload
     log('info', 'app', 'Decoding payload', { length: payload.length });
-    const decoded = await decodePayload(payload);
+    const decoded = await decodePayload(payload, topLevelTo);
     
     if (!Array.isArray(decoded) || decoded.length === 0) {
       outputDiv.innerHTML = '<div class="error-message">Failed to decode payload</div>';
@@ -268,7 +272,8 @@ async function handleMultiplePayloads(payloads, chainId, label, outputDiv) {
     const txChainId = payloadObj.chainId || chainId;
     
     try {
-      const decoded = await decodePayload(payloadObj.payload);
+      // Pass the 'to' address from the payload object to decoder
+      const decoded = await decodePayload(payloadObj.payload, payloadObj.to);
       
       // Collect nested bytes for each decoded result
       for (const item of decoded) {

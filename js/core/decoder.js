@@ -151,10 +151,11 @@ async function decodeSingleCall(call) {
  * Handles all formats and returns structured decoded data.
  * 
  * @param {string} payload - The hex-encoded payload
+ * @param {string} [topLevelTo] - The top-level contract address being called (from link parsing)
  * @returns {Promise<DecodedCall[]>} Array of decoded call results
  */
-async function decodePayload(payload) {
-  log('info', 'decoder', 'Starting payload decode', { payloadLength: payload?.length });
+async function decodePayload(payload, topLevelTo = null) {
+  log('info', 'decoder', 'Starting payload decode', { payloadLength: payload?.length, topLevelTo });
   
   if (!payload || typeof payload !== 'string') {
     log('error', 'decoder', 'Invalid payload provided');
@@ -177,6 +178,12 @@ async function decodePayload(payload) {
     for (let i = 0; i < calls.length; i++) {
       log('debug', 'decoder', `Decoding call ${i + 1}/${calls.length}`);
       const decoded = await decodeSingleCall(calls[i]);
+      
+      // For the first call (top-level), use topLevelTo if available and no address was extracted
+      if (i === 0 && topLevelTo && !decoded.calledAddress) {
+        decoded.calledAddress = topLevelTo;
+      }
+      
       results.push(decoded);
     }
     

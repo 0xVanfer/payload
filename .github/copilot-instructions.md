@@ -130,3 +130,10 @@ Key points:
 2. Handle CORS issues appropriately for static deployment
 3. Implement proper error handling with user-friendly messages
 4. Support recursive parsing depth for nested multicall/safe transactions
+
+## Working Style
+
+-   The user always has sufficient time and budget
+-   Think thoroughly and plan comprehensively before implementing
+-   Complete tasks step by step after careful consideration
+-   Prioritize correctness and completeness over speed
