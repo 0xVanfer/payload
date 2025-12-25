@@ -326,6 +326,111 @@ function renderRecursiveTable(decoded, explorerUrl) {
 }
 
 /**
+ * Render multiple decoded results as a grouped set.
+ * Used for VNet transaction lists and similar multi-payload scenarios.
+ * 
+ * @param {Array<{index: number, txHash?: string, to?: string, from?: string, chainId?: string, decoded: Array, error?: string, payload: string}>} results - Array of decoded results
+ * @param {string|number} chainId - The chain ID for explorer links
+ * @param {string} label - Label for the group
+ * @returns {string} HTML string for the grouped results
+ */
+function renderMultipleResults(results, chainId, label) {
+  log('info', 'renderer', 'Rendering multiple results', { count: results.length, label });
+  
+  // Reset counters for fresh IDs
+  resetCounters();
+  
+  // Reset address collector for fresh address tracking
+  resetAddressCollector();
+  
+  uint256Elements = [];
+  
+  const explorerUrl = getExplorerUrl(chainId);
+  
+  let html = `
+    <div class="multiple-results-container">
+      <div class="multiple-results-header">
+        <h2 class="multiple-results-title">${escapeHtml(label)}</h2>
+        <span class="transaction-count">${results.length} transaction${results.length > 1 ? 's' : ''}</span>
+      </div>
+  `;
+  
+  for (const result of results) {
+    html += renderSingleTransactionGroup(result, explorerUrl);
+  }
+  
+  html += '</div>';
+  
+  return html;
+}
+
+/**
+ * Render a single transaction group within multiple results.
+ * @param {Object} result - The result object with decoded data
+ * @param {string} explorerUrl - Block explorer base URL
+ * @returns {string} HTML string
+ */
+function renderSingleTransactionGroup(result, explorerUrl) {
+  let html = `
+    <div class="transaction-group">
+      <div class="transaction-header">
+        <span class="transaction-index">Transaction #${result.index}</span>
+  `;
+  
+  if (result.txHash) {
+    html += `<span class="transaction-hash" title="${escapeHtml(result.txHash)}">${escapeHtml(result.txHash.slice(0, 10))}...${escapeHtml(result.txHash.slice(-8))}</span>`;
+  }
+  
+  if (result.to) {
+    const toAddress = checksumAddress(result.to);
+    const addrElementId = generateAddressElementId();
+    registerAddress(toAddress, addrElementId);
+    
+    const link = explorerUrl 
+      ? `<a href="${explorerUrl}/address/${toAddress}" target="_blank" rel="noopener">${toAddress.slice(0, 10)}...${toAddress.slice(-8)}</a>`
+      : `${toAddress.slice(0, 10)}...${toAddress.slice(-8)}`;
+    html += `<span class="transaction-to" id="${addrElementId}" data-address="${toAddress}">To: ${link}</span>`;
+  }
+  
+  html += '</div>';
+  
+  if (result.error) {
+    html += `<div class="error-message">Error: ${escapeHtml(result.error)}</div>`;
+  } else if (result.decoded && Array.isArray(result.decoded) && result.decoded.length > 0) {
+    // Render the decoded results as a table
+    html += `
+      <div class="results-table-container">
+        <table class="results-table" style="width: 100%; table-layout: fixed;">
+          <colgroup>
+            <col style="width: 22%;">
+            <col style="width: 58%;">
+            <col style="width: 20%;">
+          </colgroup>
+          <thead>
+            <tr>
+              <th class="col-function">Function & Called Address</th>
+              <th class="col-params">Parameters</th>
+              <th class="col-payload">Payload</th>
+            </tr>
+          </thead>
+          <tbody>
+    `;
+    
+    for (let i = 0; i < result.decoded.length; i++) {
+      const item = result.decoded[i];
+      html += renderResultRow(item, explorerUrl, i);
+    }
+    
+    html += '</tbody></table></div>';
+  } else {
+    html += '<div class="no-data">No decoded data available</div>';
+  }
+  
+  html += '</div>';
+  return html;
+}
+
+/**
  * Initialize interactive elements after rendering.
  * Call this after inserting the rendered HTML into the DOM.
  * @param {HTMLElement} container - The container element
@@ -382,6 +487,7 @@ function initUint256Calculators(container) {
 export {
   renderResults,
   renderRecursiveBytes,
+  renderMultipleResults,
   initializeInteractivity,
   renderParameter,
   renderParameters

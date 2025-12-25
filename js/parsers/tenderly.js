@@ -19,6 +19,9 @@ const TENDERLY_API_BASE = 'https://api.tenderly.co/api/v1';
  * Regex patterns for different Tenderly URL formats.
  */
 const PATTERNS = {
+  // VNet transaction list: /explorer/vnet/{vnetId}/transactions or /explorer/vnet/{vnetId}
+  vnetList: /\/explorer\/vnet\/([a-f0-9-]+)(?:\/transactions)?$/i,
+  
   // VNet transaction: /explorer/vnet/{vnetId}/tx/{txHash}
   vnet: /\/explorer\/vnet\/([a-f0-9-]+)\/tx\/(0x[a-f0-9]+)/i,
   
@@ -91,6 +94,61 @@ async function fetchVnetTransaction(vnetId, txHash) {
 }
 
 /**
+ * Fetch VNet transaction list from Tenderly API.
+ * @param {string} vnetId - The VNet identifier
+ * @returns {Promise<Array>} The array of transactions
+ */
+async function fetchVnetTransactionList(vnetId) {
+  const url = `${TENDERLY_API_BASE}/testnets/public/${vnetId}/transactions?offset=0&limit=100`;
+  log('debug', 'tenderly', 'Fetching VNet transaction list', { url });
+  
+  const response = await fetch(url, {
+    headers: {
+      'Accept': 'application/json, text/plain, */*',
+      'Origin': 'https://dashboard.tenderly.co',
+      'Referer': 'https://dashboard.tenderly.co/'
+    }
+  });
+  
+  if (!response.ok) {
+    throw new Error(`API request failed: ${response.status}`);
+  }
+  
+  const data = await response.json();
+  // API returns { fork_transactions: [...] }
+  return data.fork_transactions || data || [];
+}
+
+/**
+ * Process VNet transaction list and filter valid transactions.
+ * @param {Array} transactions - Raw transaction list from API
+ * @returns {Array<{hash: string, input: string, network_id: string, to: string, from: string}>} Filtered and sorted transactions
+ */
+function processVnetTransactionList(transactions) {
+  if (!Array.isArray(transactions)) {
+    return [];
+  }
+  
+  // Filter transactions that have both project_id and hash (excluding vnet creation)
+  const validTxs = transactions.filter(tx => {
+    const hasProjectId = !!tx.project_id;
+    const hasHash = !!tx.hash;
+    const hasInput = !!tx.input && tx.input !== '0x';
+    return hasProjectId && hasHash && hasInput;
+  });
+  
+  // Reverse to get chronological order (API returns time descending)
+  const chronologicalTxs = [...validTxs].reverse();
+  
+  log('debug', 'tenderly', 'Processed VNet transaction list', { 
+    total: transactions.length, 
+    valid: chronologicalTxs.length 
+  });
+  
+  return chronologicalTxs;
+}
+
+/**
  * Fetch public simulation data from Tenderly API.
  * @param {string} account - The Tenderly account name
  * @param {string} project - The project name
@@ -140,6 +198,55 @@ async function parseTenderlyLink(url) {
   
   try {
     switch (type) {
+      case 'vnetList': {
+        const vnetId = matches[1];
+        
+        log('debug', 'tenderly', 'Parsing VNet transaction list', { vnetId });
+        
+        const data = await fetchVnetTransactionList(vnetId);
+        const transactions = processVnetTransactionList(data);
+        
+        if (transactions.length === 0) {
+          return {
+            success: false,
+            error: 'No valid transactions found in VNet'
+          };
+        }
+        
+        // If only one transaction, return as single payload
+        if (transactions.length === 1) {
+          const tx = transactions[0];
+          return {
+            success: true,
+            payload: tx.input,
+            txHash: tx.hash,
+            chainId: tx.network_id,
+            to: tx.to,
+            from: tx.from,
+            source: 'tenderly-vnet'
+          };
+        }
+        
+        // Multiple transactions - return as vnet transaction list
+        const payloads = transactions.map(tx => ({
+          payload: tx.input,
+          txHash: tx.hash,
+          chainId: tx.network_id,
+          to: tx.to,
+          from: tx.from
+        }));
+        
+        // Use the first transaction's chainId as default
+        return {
+          success: true,
+          isMultiple: true,
+          payloads,
+          chainId: transactions[0].network_id,
+          source: 'tenderly-vnet-list',
+          label: 'VNet Transactions'
+        };
+      }
+      
       case 'vnet': {
         const vnetId = matches[1];
         const txHash = matches[2];

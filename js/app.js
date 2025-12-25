@@ -20,7 +20,8 @@ import { parseLink, isParsableLink } from './parsers/index.js';
 import { getAllChainIds, getChainName, getExplorerUrl, getRpcUrl } from './config/chains.js';
 import { 
   renderResults, 
-  renderRecursiveBytes, 
+  renderRecursiveBytes,
+  renderMultipleResults,
   initializeInteractivity 
 } from './ui/renderer.js';
 import { 
@@ -152,6 +153,9 @@ async function handleParse() {
   try {
     let payload = input;
     let chainId = state.currentChainId;
+    let isMultiplePayloads = false;
+    let payloads = null;
+    let multipleLabel = '';
     
     // Check if input is a link
     if (isParsableLink(input)) {
@@ -163,14 +167,31 @@ async function handleParse() {
         return;
       }
       
-      payload = linkResult.payload;
-      if (linkResult.chainId) {
-        chainId = String(linkResult.chainId);
-        document.getElementById('chain-select').value = chainId;
-        state.currentChainId = chainId;
+      // Check if result contains multiple payloads
+      if (linkResult.isMultiple && linkResult.payloads) {
+        isMultiplePayloads = true;
+        payloads = linkResult.payloads;
+        multipleLabel = linkResult.label || 'Multiple Transactions';
+        if (linkResult.chainId) {
+          chainId = String(linkResult.chainId);
+        }
+        log('info', 'app', 'Multiple payloads detected', { count: payloads.length, label: multipleLabel });
+      } else {
+        payload = linkResult.payload;
+        if (linkResult.chainId) {
+          chainId = String(linkResult.chainId);
+        }
+        log('info', 'app', 'Link parsed successfully', { chainId, payloadLength: payload.length });
       }
       
-      log('info', 'app', 'Link parsed successfully', { chainId, payloadLength: payload.length });
+      document.getElementById('chain-select').value = chainId;
+      state.currentChainId = chainId;
+    }
+    
+    // Handle multiple payloads
+    if (isMultiplePayloads && payloads) {
+      await handleMultiplePayloads(payloads, chainId, multipleLabel, outputDiv);
+      return;
     }
     
     // Validate payload
@@ -223,6 +244,78 @@ async function handleParse() {
     log('error', 'app', 'Parse error', { error: e.message, stack: e.stack });
     outputDiv.innerHTML = `<div class="error-message">Parse error: ${e.message}</div>`;
   }
+}
+
+/**
+ * Handle multiple payloads (e.g., from VNet transaction list).
+ * Decodes each payload and renders them as a grouped set.
+ * 
+ * @param {Array<{payload: string, txHash?: string, chainId?: string, to?: string, from?: string}>} payloads - Array of payload objects
+ * @param {string} chainId - Default chain ID
+ * @param {string} label - Label for the group (e.g., "VNet Transactions")
+ * @param {HTMLElement} outputDiv - Output container element
+ */
+async function handleMultiplePayloads(payloads, chainId, label, outputDiv) {
+  log('info', 'app', 'Handling multiple payloads', { count: payloads.length, label });
+  
+  const explorerUrl = getExplorerUrl(chainId);
+  const allDecodedResults = [];
+  const allNestedBytes = [];
+  
+  // Decode each payload
+  for (let i = 0; i < payloads.length; i++) {
+    const payloadObj = payloads[i];
+    const txChainId = payloadObj.chainId || chainId;
+    
+    try {
+      const decoded = await decodePayload(payloadObj.payload);
+      
+      // Collect nested bytes for each decoded result
+      for (const item of decoded) {
+        if (item.params) {
+          const nested = await findAndDecodeNestedBytes(item.params);
+          allNestedBytes.push(...nested);
+        }
+      }
+      
+      allDecodedResults.push({
+        index: i + 1,
+        txHash: payloadObj.txHash,
+        to: payloadObj.to,
+        from: payloadObj.from,
+        chainId: txChainId,
+        decoded,
+        payload: payloadObj.payload
+      });
+    } catch (e) {
+      log('error', 'app', `Failed to decode payload ${i + 1}`, { error: e.message });
+      allDecodedResults.push({
+        index: i + 1,
+        txHash: payloadObj.txHash,
+        error: e.message,
+        payload: payloadObj.payload
+      });
+    }
+  }
+  
+  // Render grouped results
+  let html = renderMultipleResults(allDecodedResults, chainId, label);
+  
+  // Render nested bytes if any
+  if (allNestedBytes.length > 0) {
+    html += renderRecursiveBytes(allNestedBytes, explorerUrl);
+  }
+  
+  outputDiv.innerHTML = html;
+  initializeInteractivity(outputDiv);
+  
+  log('info', 'app', 'Multiple payloads parsed', { 
+    total: payloads.length, 
+    successful: allDecodedResults.filter(r => !r.error).length 
+  });
+  
+  // Post-processing: Fetch and display contract info
+  await fetchAndDisplayContractInfo(chainId);
 }
 
 /**
