@@ -38,9 +38,12 @@ let uint256Elements = [];
  * 
  * @param {Array} decodedResults - Array of decoded call results
  * @param {string|number} chainId - The chain ID for explorer links
+ * @param {Object} [options] - Additional options
+ * @param {string} [options.from] - The caller address (from)
+ * @param {string} [options.to] - The called contract address (to)
  * @returns {string} HTML string for the results table
  */
-function renderResults(decodedResults, chainId) {
+function renderResults(decodedResults, chainId, options = {}) {
   log('info', 'renderer', 'Rendering results', { count: decodedResults.length, chainId });
   
   // Reset counters for fresh IDs
@@ -52,6 +55,7 @@ function renderResults(decodedResults, chainId) {
   uint256Elements = [];
   
   const explorerUrl = getExplorerUrl(chainId);
+  const { from: callerAddress, to: topLevelTo } = options;
   
   let html = `
     <div class="results-table-container">
@@ -63,7 +67,7 @@ function renderResults(decodedResults, chainId) {
         </colgroup>
         <thead>
           <tr>
-            <th class="col-function">Function & Called Address</th>
+            <th class="col-function">Function & Addresses</th>
             <th class="col-params">Parameters</th>
             <th class="col-payload">Payload</th>
           </tr>
@@ -73,7 +77,9 @@ function renderResults(decodedResults, chainId) {
   
   for (let i = 0; i < decodedResults.length; i++) {
     const item = decodedResults[i];
-    html += renderResultRow(item, explorerUrl, i);
+    // Pass caller address only for the first (top-level) call
+    const rowOptions = i === 0 ? { callerAddress, topLevelTo } : {};
+    html += renderResultRow(item, explorerUrl, i, rowOptions);
   }
   
   html += `
@@ -90,17 +96,36 @@ function renderResults(decodedResults, chainId) {
  * @param {Object} item - The decoded call item
  * @param {string} explorerUrl - Block explorer base URL
  * @param {number} index - Row index
+ * @param {Object} [options] - Additional options
+ * @param {string} [options.callerAddress] - The caller address (from)
+ * @param {string} [options.topLevelTo] - The top-level called address
  * @returns {string} HTML string for the row
  */
-function renderResultRow(item, explorerUrl, index) {
+function renderResultRow(item, explorerUrl, index, options = {}) {
+  const { callerAddress, topLevelTo } = options;
   let html = `<tr class="result-row" data-index="${index}">`;
   
   // Function name and address column
   html += '<td class="col-function">';
   html += `<div class="function-name">${escapeHtml(item.functionName || 'unknown')}</div>`;
   
-  if (item.calledAddress) {
-    const address = checksumAddress(item.calledAddress);
+  // Show caller address (from) if available - only for top-level call
+  if (callerAddress) {
+    const fromAddr = checksumAddress(callerAddress);
+    const fromElementId = generateAddressElementId();
+    registerAddress(fromAddr, fromElementId);
+    
+    const fromLink = explorerUrl 
+      ? `<a href="${explorerUrl}/address/${fromAddr}" target="_blank" rel="noopener">${fromAddr}</a>`
+      : fromAddr;
+    html += `<div class="caller-address" id="${fromElementId}" data-address="${fromAddr}"><span class="address-label">From:</span> ${fromLink}</div>`;
+  }
+  
+  // Show called address (to)
+  // Use item.calledAddress if available, otherwise fallback to topLevelTo for top-level call
+  const calledAddr = item.calledAddress || topLevelTo;
+  if (calledAddr) {
+    const address = checksumAddress(calledAddr);
     
     // Generate unique ID for address tracking
     const addrElementId = generateAddressElementId();
@@ -109,7 +134,7 @@ function renderResultRow(item, explorerUrl, index) {
     const link = explorerUrl 
       ? `<a href="${explorerUrl}/address/${address}" target="_blank" rel="noopener">${address}</a>`
       : address;
-    html += `<div class="called-address" id="${addrElementId}" data-address="${address}">${link}</div>`;
+    html += `<div class="called-address" id="${addrElementId}" data-address="${address}"><span class="address-label">To:</span> ${link}</div>`;
   }
   
   if (item.error) {
@@ -296,7 +321,7 @@ function renderRecursiveTable(decoded, explorerUrl) {
       const link = explorerUrl 
         ? `<a href="${explorerUrl}/address/${address}" target="_blank" rel="noopener">${address}</a>`
         : address;
-      calledAddressHtml = `<div class="called-address" id="${addrElementId}" data-address="${address}">${link}</div>`;
+      calledAddressHtml = `<div class="called-address" id="${addrElementId}" data-address="${address}"><span class="address-label">To:</span> ${link}</div>`;
     }
     
     html += `
@@ -408,7 +433,7 @@ function renderSingleTransactionGroup(result, explorerUrl) {
           </colgroup>
           <thead>
             <tr>
-              <th class="col-function">Function & Called Address</th>
+              <th class="col-function">Function & Addresses</th>
               <th class="col-params">Parameters</th>
               <th class="col-payload">Payload</th>
             </tr>
@@ -418,7 +443,9 @@ function renderSingleTransactionGroup(result, explorerUrl) {
     
     for (let i = 0; i < result.decoded.length; i++) {
       const item = result.decoded[i];
-      html += renderResultRow(item, explorerUrl, i);
+      // Pass from/to for the first (top-level) call
+      const rowOptions = i === 0 ? { callerAddress: result.from, topLevelTo: result.to } : {};
+      html += renderResultRow(item, explorerUrl, i, rowOptions);
     }
     
     html += '</tbody></table></div>';

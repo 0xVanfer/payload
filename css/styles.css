@@ -203,6 +203,24 @@ body {
   line-height: 1.6;
 }
 
+.sig-tool-tip {
+  background: var(--color-success-light);
+  border-left: 3px solid var(--color-success);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--radius-sm);
+  margin: var(--spacing-sm) 0;
+}
+
+.sig-tool-tip a {
+  color: var(--color-primary);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.sig-tool-tip a:hover {
+  text-decoration: underline;
+}
+
 .sig-input {
   width: 100%;
   padding: var(--spacing-md);
@@ -296,6 +314,11 @@ body {
 
 .called-address a:hover {
   text-decoration: underline;
+}
+
+/* When there's a caller-address, add some visual separation */
+.caller-address + .called-address {
+  margin-top: 2px;
 }
 
 .decode-error {
@@ -575,6 +598,30 @@ table.nested-table td.col-payload { width: 20%; overflow: hidden; }
 
 .no-params {
   color: var(--color-text-secondary);
+}
+
+/* ===== Caller/Called Address Labels ===== */
+.caller-address {
+  margin-top: var(--spacing-xs);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.caller-address a {
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+.caller-address a:hover {
+  text-decoration: underline;
+}
+
+.address-label {
+  color: var(--color-primary);
+  font-weight: 500;
+  font-family: var(--font-sans);
+  margin-right: var(--spacing-xs);
 }
 
 /* ===== Multiple Results (VNet Transaction List) ===== */

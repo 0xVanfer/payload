@@ -40,8 +40,30 @@ import {
 const state = {
   currentChainId: '1',
   lastParsedPayload: null,
-  isSignatureFormVisible: false
+  isSignatureFormVisible: false,
+  lastLinkInfo: null  // Stores from/to/chainId when parsing links
 };
+
+/**
+ * Normalize payload by ensuring it has 0x prefix.
+ * Validates that the input looks like hex data.
+ * @param {string} input - The input string
+ * @returns {{isPayload: boolean, payload: string}} Whether it's a valid payload and normalized version
+ */
+function normalizePayload(input) {
+  // If it already has 0x prefix
+  if (input.startsWith('0x') || input.startsWith('0X')) {
+    return { isPayload: true, payload: input.toLowerCase() };
+  }
+  
+  // Check if it looks like hex data (only hex characters)
+  // Must be at least 8 characters (4 bytes selector) and even length
+  if (/^[a-fA-F0-9]+$/.test(input) && input.length >= 8 && input.length % 2 === 0) {
+    return { isPayload: true, payload: '0x' + input.toLowerCase() };
+  }
+  
+  return { isPayload: false, payload: input };
+}
 
 /**
  * Initialize the application when DOM is ready.
@@ -157,10 +179,16 @@ async function handleParse() {
     let payloads = null;
     let multipleLabel = '';
     let topLevelTo = null;
+    let topLevelFrom = null;
+    let isFromLink = false;
+    
+    // Reset link info
+    state.lastLinkInfo = null;
     
     // Check if input is a link
     if (isParsableLink(input)) {
       log('info', 'app', 'Detected link input, parsing...');
+      isFromLink = true;
       const linkResult = await parseLink(input);
       
       if (!linkResult.success) {
@@ -168,8 +196,17 @@ async function handleParse() {
         return;
       }
       
-      // Store the top-level called address
+      // Store the top-level called address and caller
       topLevelTo = linkResult.to || null;
+      topLevelFrom = linkResult.from || null;
+      
+      // Save link info for display
+      state.lastLinkInfo = {
+        from: topLevelFrom,
+        to: topLevelTo,
+        chainId: linkResult.chainId,
+        txHash: linkResult.txHash
+      };
       
       // Check if result contains multiple payloads
       if (linkResult.isMultiple && linkResult.payloads) {
@@ -185,7 +222,7 @@ async function handleParse() {
         if (linkResult.chainId) {
           chainId = String(linkResult.chainId);
         }
-        log('info', 'app', 'Link parsed successfully', { chainId, payloadLength: payload.length, to: topLevelTo });
+        log('info', 'app', 'Link parsed successfully', { chainId, payloadLength: payload.length, from: topLevelFrom, to: topLevelTo });
       }
       
       document.getElementById('chain-select').value = chainId;
@@ -198,9 +235,19 @@ async function handleParse() {
       return;
     }
     
+    // Normalize payload - add 0x prefix if missing but looks like hex
+    if (!isFromLink) {
+      const normalized = normalizePayload(payload);
+      if (!normalized.isPayload) {
+        outputDiv.innerHTML = '<div class="error-message">Invalid payload format. Expected hex data (with or without 0x prefix).</div>';
+        return;
+      }
+      payload = normalized.payload;
+    }
+    
     // Validate payload
     if (!payload.startsWith('0x')) {
-      outputDiv.innerHTML = '<div class="error-message">Payload must start with 0x</div>';
+      outputDiv.innerHTML = '<div class="error-message">Payload must be valid hex data</div>';
       return;
     }
     
@@ -213,8 +260,9 @@ async function handleParse() {
       return;
     }
     
-    // Render main results
-    let html = renderResults(decoded, chainId);
+    // Render main results with from/to info for link inputs
+    const renderOptions = isFromLink ? { from: topLevelFrom, to: topLevelTo } : {};
+    let html = renderResults(decoded, chainId, renderOptions);
     
     // Find and decode nested bytes
     const nestedBytes = [];

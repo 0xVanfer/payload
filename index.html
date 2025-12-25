@@ -25,7 +25,7 @@
           id="payload-input" 
           class="input-field" 
           placeholder="Supported formats:
-• Raw payload:      0x...
+• Raw payload:      0x... (or without 0x prefix)
 • Etherscan TX:     https://etherscan.io/tx/0x...
 • Tenderly VNet TX: https://dashboard.tenderly.co/explorer/vnet/{id}/tx/0x...
 • Tenderly VNet:    https://dashboard.tenderly.co/explorer/vnet/{id}/transactions
@@ -56,6 +56,11 @@
           <p>
             If a function is showing as "unknown", you can register its signature here.
             Supports functions, errors, and events.
+          </p>
+          <p class="sig-tool-tip">
+            💡 <strong>Tip:</strong> Use 
+            <a href="https://github.com/0xVanfer/extract_sig" target="_blank" rel="noopener">extract_sig</a> 
+            to extract function/error signatures from your Solidity contracts automatically.
           </p>
           <p><strong>Supported formats:</strong></p>
           <pre>// Functions
