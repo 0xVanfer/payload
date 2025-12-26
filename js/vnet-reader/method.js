@@ -113,11 +113,13 @@ function showMethodSuggestions(query) {
   for (const method of allResults) {
     const isFromABI = abiResults.includes(method);
     const isSession = sessionResults.includes(method);
+    // For ABI methods, display signature with outputs for clarity
+    const displaySig = method.outputs ? `${method.signature}${method.outputs}` : method.signature;
     
     html += `
-      <div class="suggestion-item${isFromABI ? ' suggestion-abi' : ''}" data-signature="${escapeHtml(method.signature)}">
+      <div class="suggestion-item${isFromABI ? ' suggestion-abi' : ''}" data-signature="${escapeHtml(method.signature)}" data-outputs="${escapeHtml(method.outputs || '')}">
         <span class="suggestion-name">${escapeHtml(method.name)}</span>
-        <span class="suggestion-signature">${escapeHtml(method.signature)}</span>
+        <span class="suggestion-signature">${escapeHtml(displaySig)}</span>
         ${method.categoryLabel ? `<span class="suggestion-category">${escapeHtml(method.categoryLabel)}</span>` : ''}
         ${isFromABI ? '<span class="suggestion-badge suggestion-badge-abi">ABI</span>' : ''}
         ${isSession && !isFromABI ? '<span class="suggestion-badge">Recent</span>' : ''}
@@ -132,7 +134,10 @@ function showMethodSuggestions(query) {
   suggestions.querySelectorAll('.suggestion-item').forEach(item => {
     item.addEventListener('click', () => {
       const sig = item.dataset.signature;
-      document.getElementById('method-input').value = sig;
+      const outputs = item.dataset.outputs || '';
+      // If method has outputs from ABI, include them in the input for parsing
+      const fullSig = outputs ? `${sig}${outputs}` : sig;
+      document.getElementById('method-input').value = fullSig;
       hideSuggestions();
       parseCurrentMethod();
     });
@@ -175,9 +180,13 @@ export function initPresetSelectors() {
   
   // Handle method select
   methodSelect.addEventListener('change', (e) => {
-    const sig = e.target.value;
-    if (sig) {
-      document.getElementById('method-input').value = sig;
+    const option = e.target.selectedOptions[0];
+    if (option && option.value) {
+      const sig = option.value;
+      const outputs = option.dataset.outputs || '';
+      // Include outputs in the input for parsing
+      const fullSig = outputs ? `${sig}${outputs}` : sig;
+      document.getElementById('method-input').value = fullSig;
       parseCurrentMethod();
     }
   });
@@ -202,7 +211,10 @@ function populateMethodSelect(category) {
     for (const method of methods) {
       const option = document.createElement('option');
       option.value = method.signature;
-      option.textContent = `${method.name} - ${method.description}`;
+      option.dataset.outputs = method.outputs || '';
+      // Display signature with outputs for clarity
+      const displaySig = method.outputs ? `${method.signature}${method.outputs}` : method.signature;
+      option.textContent = `${method.name} - ${displaySig}`;
       methodSelect.appendChild(option);
     }
     return;
@@ -212,7 +224,10 @@ function populateMethodSelect(category) {
   for (const method of methods) {
     const option = document.createElement('option');
     option.value = method.signature;
-    option.textContent = `${method.name} - ${method.description}`;
+    option.dataset.outputs = method.outputs || '';
+    // Display signature with outputs for clarity  
+    const displaySig = method.outputs ? `${method.signature}${method.outputs}` : method.signature;
+    option.textContent = `${method.name} - ${displaySig}`;
     methodSelect.appendChild(option);
   }
 }

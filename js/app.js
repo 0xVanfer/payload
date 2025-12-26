@@ -321,6 +321,8 @@ async function handleParse() {
   } catch (e) {
     log('error', 'app', 'Parse error', { error: e.message, stack: e.stack });
     outputDiv.innerHTML = `<div class="error-message">Parse error: ${e.message}</div>`;
+    // Still update VNet button - if we have vnetInfo from the link, show the button
+    updateVnetButtonVisibility();
   }
 }
 

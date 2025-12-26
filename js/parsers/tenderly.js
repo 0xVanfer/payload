@@ -377,10 +377,22 @@ async function parseTenderlyLink(url) {
   
   const { type, matches } = detected;
   
+  // Extract vnetId early so it's available in catch block
+  // This allows "Read on VNet" button to work even when API calls fail
+  let vnetId = null;
+  let defaultChainId = '1';
+  
+  // Determine vnetId based on URL type
+  if (type === 'vnetList' || type === 'vnet') {
+    vnetId = matches[1];
+  } else if (type === 'testnetTx' || type === 'testnetList') {
+    vnetId = matches[3]; // testnetId is at index 3
+  }
+  
   try {
     switch (type) {
       case 'vnetList': {
-        const vnetId = matches[1];
+        // vnetId already extracted above
         
         log('debug', 'tenderly', 'Parsing VNet transaction list', { vnetId });
         
@@ -389,8 +401,9 @@ async function parseTenderlyLink(url) {
         
         // Generate VNet RPC URL regardless of transaction count
         // So the "Read on VNet" button can still be shown
-        const defaultChainId = transactions.length > 0 ? (transactions[0].network_id || '1') : '1';
-        const vnetRpcUrl = generateVnetRpcUrl(vnetId, defaultChainId);
+        const listChainId = transactions.length > 0 ? (transactions[0].network_id || '1') : '1';
+        defaultChainId = listChainId; // Update outer variable for catch block
+        const vnetRpcUrl = generateVnetRpcUrl(vnetId, listChainId);
         
         if (transactions.length === 0) {
           return {
@@ -398,7 +411,7 @@ async function parseTenderlyLink(url) {
             error: 'No valid transactions found in VNet',
             vnetId,
             vnetRpcUrl,
-            chainId: defaultChainId
+            chainId: listChainId
           };
         }
         
@@ -431,7 +444,7 @@ async function parseTenderlyLink(url) {
           success: true,
           isMultiple: true,
           payloads,
-          chainId: defaultChainId,
+          chainId: listChainId,
           source: 'tenderly-vnet-list',
           label: 'VNet Transactions',
           vnetId,
@@ -440,7 +453,7 @@ async function parseTenderlyLink(url) {
       }
       
       case 'vnet': {
-        const vnetId = matches[1];
+        // vnetId already extracted above
         const txHash = matches[2];
         
         log('debug', 'tenderly', 'Parsing VNet transaction', { vnetId, txHash });
@@ -450,18 +463,21 @@ async function parseTenderlyLink(url) {
         // Extract payload from response - VNet uses fork_transaction structure
         const tx = data?.fork_transaction || data?.transaction || data;
         const payload = tx?.input || data?.input;
+        const chainId = tx?.network_id || data?.network_id || '1';
+        defaultChainId = chainId; // Update outer variable for catch block
+        const vnetRpcUrl = generateVnetRpcUrl(vnetId, chainId);
         
         if (!payload) {
           log('error', 'tenderly', 'API response structure', { keys: Object.keys(data || {}) });
           return {
             success: false,
             txHash,
-            error: 'Could not find input data in API response'
+            error: 'Could not find input data in API response',
+            vnetId,
+            vnetRpcUrl,
+            chainId
           };
         }
-        
-        const chainId = tx?.network_id || data?.network_id || '1';
-        const vnetRpcUrl = generateVnetRpcUrl(vnetId, chainId);
         
         return {
           success: true,
@@ -498,12 +514,24 @@ async function parseTenderlyLink(url) {
           };
         }
         
+        const simChainId = simulation?.network_id || simulation?.transaction?.network_id || '1';
+        
+        // Try to extract fork_id for VNet RPC URL
+        const forkId = simulation?.fork_id || data?.fork_id;
+        let simVnetRpcUrl = null;
+        if (forkId) {
+          simVnetRpcUrl = generateVnetRpcUrl(forkId, simChainId);
+        }
+        
         return {
           success: true,
           payload,
-          chainId: simulation?.network_id || simulation?.transaction?.network_id,
+          chainId: simChainId,
           to: simulation?.to || simulation?.transaction?.to,
-          from: simulation?.from || simulation?.transaction?.from
+          from: simulation?.from || simulation?.transaction?.from,
+          source: 'tenderly-simulator',
+          vnetId: forkId,
+          vnetRpcUrl: simVnetRpcUrl
         };
       }
       
@@ -526,12 +554,24 @@ async function parseTenderlyLink(url) {
           };
         }
         
+        const sharedChainId = simulation?.network_id || simulation?.transaction?.network_id || '1';
+        
+        // Try to extract fork_id for VNet RPC URL
+        const sharedForkId = simulation?.fork_id || data?.fork_id;
+        let sharedVnetRpcUrl = null;
+        if (sharedForkId) {
+          sharedVnetRpcUrl = generateVnetRpcUrl(sharedForkId, sharedChainId);
+        }
+        
         return {
           success: true,
           payload,
-          chainId: simulation?.network_id || simulation?.transaction?.network_id,
+          chainId: sharedChainId,
           to: simulation?.to || simulation?.transaction?.to,
-          from: simulation?.from || simulation?.transaction?.from
+          from: simulation?.from || simulation?.transaction?.from,
+          source: 'tenderly-shared-simulation',
+          vnetId: sharedForkId,
+          vnetRpcUrl: sharedVnetRpcUrl
         };
       }
       
@@ -552,12 +592,24 @@ async function parseTenderlyLink(url) {
                          simulation?.transaction_info?.input;
           
           if (payload) {
+            const accChainId = simulation?.network_id || simulation?.transaction?.network_id || '1';
+            
+            // Try to extract fork_id for VNet RPC URL
+            const accForkId = simulation?.fork_id || data?.fork_id;
+            let accVnetRpcUrl = null;
+            if (accForkId) {
+              accVnetRpcUrl = generateVnetRpcUrl(accForkId, accChainId);
+            }
+            
             return {
               success: true,
               payload,
-              chainId: simulation?.network_id || simulation?.transaction?.network_id,
+              chainId: accChainId,
               to: simulation?.to || simulation?.transaction?.to,
-              from: simulation?.from || simulation?.transaction?.from
+              from: simulation?.from || simulation?.transaction?.from,
+              source: 'tenderly-account-simulation',
+              vnetId: accForkId,
+              vnetRpcUrl: accVnetRpcUrl
             };
           }
         } catch (e) {
@@ -573,26 +625,29 @@ async function parseTenderlyLink(url) {
       case 'testnetTx': {
         const account = matches[1];
         const project = matches[2];
-        const testnetId = matches[3];
+        // vnetId (testnetId) already extracted above
         const txHash = matches[4];
         
-        log('debug', 'tenderly', 'Parsing testnet transaction', { account, project, testnetId, txHash });
+        log('debug', 'tenderly', 'Parsing testnet transaction', { account, project, testnetId: vnetId, txHash });
         
-        const data = await fetchTestnetTransaction(account, project, testnetId, txHash);
+        const data = await fetchTestnetTransaction(account, project, vnetId, txHash);
         
         const tx = data?.fork_transaction || data?.transaction || data;
         const payload = tx?.input || data?.input;
+        const chainId = tx?.network_id || data?.network_id || '1';
+        defaultChainId = chainId;
+        const vnetRpcUrl = generateVnetRpcUrl(vnetId, chainId);
         
         if (!payload) {
           return {
             success: false,
             txHash,
-            error: 'Could not find input data in testnet transaction response'
+            error: 'Could not find input data in testnet transaction response',
+            vnetId,
+            vnetRpcUrl,
+            chainId
           };
         }
-        
-        const chainId = tx?.network_id || data?.network_id || '1';
-        const vnetRpcUrl = generateVnetRpcUrl(testnetId, chainId);
         
         return {
           success: true,
@@ -602,7 +657,7 @@ async function parseTenderlyLink(url) {
           to: tx?.to || data?.to,
           from: tx?.from || data?.from,
           source: 'tenderly-testnet',
-          vnetId: testnetId,
+          vnetId,
           vnetRpcUrl
         };
       }
@@ -610,22 +665,27 @@ async function parseTenderlyLink(url) {
       case 'testnetList': {
         const account = matches[1];
         const project = matches[2];
-        const testnetId = matches[3];
+        // vnetId (testnetId) already extracted above
         
-        log('debug', 'tenderly', 'Parsing testnet transaction list', { account, project, testnetId });
+        log('debug', 'tenderly', 'Parsing testnet transaction list', { account, project, testnetId: vnetId });
         
-        const data = await fetchTestnetTransactionList(account, project, testnetId);
+        const data = await fetchTestnetTransactionList(account, project, vnetId);
         const transactions = processVnetTransactionList(data);
+        
+        // Generate RPC URL early so it's available on failure
+        const listChainId = transactions.length > 0 ? (transactions[0].network_id || '1') : '1';
+        defaultChainId = listChainId;
+        const vnetRpcUrl = generateVnetRpcUrl(vnetId, listChainId);
         
         if (transactions.length === 0) {
           return {
             success: false,
-            error: 'No valid transactions found in testnet'
+            error: 'No valid transactions found in testnet',
+            vnetId,
+            vnetRpcUrl,
+            chainId: listChainId
           };
         }
-        
-        const defaultChainId = transactions[0].network_id || '1';
-        const vnetRpcUrl = generateVnetRpcUrl(testnetId, defaultChainId);
         
         if (transactions.length === 1) {
           const tx = transactions[0];
@@ -637,7 +697,7 @@ async function parseTenderlyLink(url) {
             to: tx.to,
             from: tx.from,
             source: 'tenderly-testnet',
-            vnetId: testnetId,
+            vnetId,
             vnetRpcUrl
           };
         }
@@ -654,10 +714,10 @@ async function parseTenderlyLink(url) {
           success: true,
           isMultiple: true,
           payloads,
-          chainId: defaultChainId,
+          chainId: listChainId,
           source: 'tenderly-testnet-list',
           label: 'TestNet Transactions',
-          vnetId: testnetId,
+          vnetId,
           vnetRpcUrl
         };
       }
@@ -703,7 +763,20 @@ async function parseTenderlyLink(url) {
     }
     
   } catch (e) {
-    log('error', 'tenderly', 'Failed to parse Tenderly link', { error: e.message });
+    log('error', 'tenderly', 'Failed to parse Tenderly link', { error: e.message, vnetId });
+    
+    // Return vnetInfo if available, so "Read on VNet" button can still work
+    if (vnetId) {
+      const vnetRpcUrl = generateVnetRpcUrl(vnetId, defaultChainId);
+      return {
+        success: false,
+        error: `Failed to fetch from Tenderly: ${e.message}`,
+        vnetId,
+        vnetRpcUrl,
+        chainId: defaultChainId
+      };
+    }
+    
     return {
       success: false,
       error: `Failed to fetch from Tenderly: ${e.message}`

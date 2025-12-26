@@ -8,6 +8,7 @@
 import { log } from '../core/abi-utils.js';
 import { parseEtherscanLink, isEtherscanLink } from './etherscan.js';
 import { parseTenderlyLink, isTenderlyLink } from './tenderly.js';
+import { parseSafeLink, isSafeLink } from './safe.js';
 
 /**
  * Result structure for parsed links.
@@ -25,6 +26,11 @@ import { parseTenderlyLink, isTenderlyLink } from './tenderly.js';
  * Each parser has a detect function and a parse function.
  */
 const parsers = [
+  {
+    name: 'safe',
+    detect: isSafeLink,
+    parse: parseSafeLink
+  },
   {
     name: 'tenderly',
     detect: isTenderlyLink,

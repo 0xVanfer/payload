@@ -99,19 +99,23 @@ export async function executeCall() {
       }
     }
     
-    // If no output types or decoding failed, try common return types
-    if (!decodeSuccess && result && result !== '0x') {
-      decoded = tryAutoDecode(result);
-      if (decoded !== null) {
-        decodeSuccess = true;
-        outputSource = 'auto';
-      }
-    }
-    
-    // Final fallback: raw hex
+    // If no output types specified, show raw hex directly (don't try to auto-decode)
+    // Only try auto-decode if we have output types but decoding failed
     if (!decodeSuccess) {
-      decoded = result;
-      outputSource = 'raw';
+      if (outputTypes && outputTypes.length > 0 && result && result !== '0x') {
+        // Had output types but decoding failed, try auto-decode as fallback
+        decoded = tryAutoDecode(result);
+        if (decoded !== null) {
+          decodeSuccess = true;
+          outputSource = 'auto';
+        }
+      }
+      
+      // Final fallback: raw hex
+      if (!decodeSuccess) {
+        decoded = result;
+        outputSource = 'raw';
+      }
     }
     
     // Build full method signature with outputs
