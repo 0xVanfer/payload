@@ -72,6 +72,7 @@ function splitTupleTypes(typeStr) {
 
 /**
  * Parse a tuple value into an array.
+ * Handles both JSON format and legacy tuple string format.
  * @param {string|Array} value - The tuple value
  * @returns {Array} Parsed array
  */
@@ -80,15 +81,63 @@ function parseTupleValue(value) {
     return value;
   }
   
-  try {
-    return JSON.parse(value);
-  } catch {
-    // Try parsing as comma-separated tuple
-    return String(value)
-      .replace(/^\(|\)$/g, '')
-      .split(',')
-      .map(s => s.trim().replace(/^"|"$/g, ''));
+  if (value === null || value === undefined) {
+    return [];
   }
+  
+  const strValue = String(value).trim();
+  
+  // Try JSON parse first (preferred format)
+  try {
+    const parsed = JSON.parse(strValue);
+    if (Array.isArray(parsed)) {
+      return parsed;
+    }
+    // If parsed result is not array, wrap it
+    return [parsed];
+  } catch {
+    // Not JSON, try legacy formats
+  }
+  
+  // Handle legacy tuple format: (val1,val2,...)
+  if (strValue.startsWith('(') && strValue.endsWith(')')) {
+    return splitRespectingBrackets(strValue.slice(1, -1));
+  }
+  
+  // Handle legacy array format: [val1,val2,...]
+  if (strValue.startsWith('[') && strValue.endsWith(']')) {
+    return splitRespectingBrackets(strValue.slice(1, -1));
+  }
+  
+  // Simple comma-separated (for simple types only)
+  return [strValue];
+}
+
+/**
+ * Split a string by commas, respecting nested brackets and parentheses.
+ * @param {string} str - The string to split
+ * @returns {string[]} Array of split values
+ */
+function splitRespectingBrackets(str) {
+  const result = [];
+  let depth = 0;
+  let start = 0;
+  
+  for (let i = 0; i < str.length; i++) {
+    const char = str[i];
+    if (char === '(' || char === '[') depth++;
+    else if (char === ')' || char === ']') depth--;
+    else if (char === ',' && depth === 0) {
+      result.push(str.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  
+  if (start < str.length) {
+    result.push(str.slice(start).trim());
+  }
+  
+  return result.filter(Boolean);
 }
 
 /**

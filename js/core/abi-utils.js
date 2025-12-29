@@ -46,29 +46,30 @@ function getFullAbiType(input) {
     return '';
   }
   
-  // Handle tuple types
-  if (input.baseType === 'tuple') {
-    const inner = input.components.map(getFullAbiType).join(',');
-    const arrayPart = input.type.endsWith('[]') ? '[]' : '';
-    return `tuple(${inner})${arrayPart}`;
-  }
-  
-  // Handle array types
-  if (input.baseType && input.baseType.endsWith('[]')) {
+  // Handle array types first (including tuple arrays)
+  if (input.baseType === 'array' || (input.baseType && input.baseType.endsWith('[]'))) {
     if (input.arrayChildren) {
       return getFullAbiType(input.arrayChildren) + '[]';
     }
     return input.type;
   }
   
+  // Handle tuple types
+  if (input.baseType === 'tuple') {
+    const inner = input.components.map(getFullAbiType).join(',');
+    return `tuple(${inner})`;
+  }
+  
   return input.type;
 }
 
 /**
- * Convert a decoded value to a displayable string format.
+ * Convert a decoded value to a displayable format.
+ * For complex types (tuple, array), returns native JS arrays.
+ * For simple types, returns strings.
  * @param {*} value - The decoded value
  * @param {Object} input - The ABI input definition
- * @returns {string} The formatted string representation
+ * @returns {*} The formatted value (string for simple types, array for complex types)
  */
 function formatValue(value, input) {
   try {
@@ -86,21 +87,20 @@ function formatValue(value, input) {
       return checksumAddress(value);
     }
     
-    // Handle tuple type
+    // Handle array types first (including tuple arrays) - return as native array
+    if (input.baseType === 'array' || (input.baseType && input.baseType.endsWith('[]'))) {
+      return Array.from(value).map((v) => {
+        return formatValue(v, input.arrayChildren);
+      });
+    }
+    
+    // Handle tuple type - return as native array (not stringified)
     if (input.baseType === 'tuple') {
       const parts = [];
       for (let i = 0; i < input.components.length; i++) {
         parts.push(formatValue(value[i], input.components[i]));
       }
-      return '(' + parts.join(',') + ')';
-    }
-    
-    // Handle array types
-    if (input.baseType && input.baseType.endsWith('[]')) {
-      const items = Array.from(value).map((v) => {
-        return formatValue(v, input.arrayChildren);
-      });
-      return '[' + items.join(',') + ']';
+      return parts;
     }
     
     // Handle numeric types
@@ -224,7 +224,10 @@ function decodeWithSignature(signature, payload) {
       const input = method.inputs[i];
       const abiType = getFullAbiType(input);
       const goType = getValueType(args[i]);
-      const value = formatValue(args[i], input);
+      const rawValue = formatValue(args[i], input);
+      
+      // Convert arrays to JSON string for storage in Value field
+      const value = Array.isArray(rawValue) ? JSON.stringify(rawValue) : rawValue;
       
       params.push({
         Value: value,
