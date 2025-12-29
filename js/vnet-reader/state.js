@@ -10,7 +10,8 @@
 export const state = {
   rpcUrl: null,
   chainId: '1',
-  provider: null,
+  provider: null,              // VNet provider
+  productionProvider: null,    // Production mainnet provider for comparison
   addresses: [],           // Addresses passed from main app
   addressSymbols: {},      // Map of address -> symbol (from main app or fetched)
   addressContractNames: {}, // Map of address -> contract name (from Etherscan)
@@ -30,6 +31,7 @@ export function resetState() {
   state.rpcUrl = null;
   state.chainId = '1';
   state.provider = null;
+  state.productionProvider = null;
   state.addresses = [];
   state.addressSymbols = {};
   state.addressContractNames = {};

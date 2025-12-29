@@ -5,7 +5,7 @@
  */
 
 import { state } from './state.js';
-import { getExplorerUrl, getChainName } from '../config/chains.js';
+import { getExplorerUrl, getChainName, getRpcUrl } from '../config/chains.js';
 
 /**
  * Parse URL parameters to get RPC URL and addresses.
@@ -64,6 +64,7 @@ export function updateConnectionDisplay() {
 
 /**
  * Initialize the ethers provider with the VNet RPC URL.
+ * Also initializes a production provider for comparison.
  */
 export async function initProvider() {
   if (!state.rpcUrl) {
@@ -76,9 +77,26 @@ export async function initProvider() {
     
     // Test connection
     const network = await state.provider.getNetwork();
-    console.log('[VNet Reader] Connected to network:', network);
+    console.log('[VNet Reader] Connected to VNet:', network);
     
     updateConnectionStatus(true, `Connected (Chain ${network.chainId})`);
+    
+    // Initialize production provider for comparison
+    const productionRpcUrl = getRpcUrl(state.chainId);
+    if (productionRpcUrl) {
+      try {
+        state.productionProvider = new window.ethers.providers.JsonRpcProvider(productionRpcUrl);
+        // Test production connection
+        await state.productionProvider.getNetwork();
+        console.log('[VNet Reader] Production provider ready:', productionRpcUrl);
+      } catch (e) {
+        console.warn('[VNet Reader] Failed to connect production provider:', e.message);
+        state.productionProvider = null;
+      }
+    } else {
+      console.warn('[VNet Reader] No production RPC URL for chain:', state.chainId);
+      state.productionProvider = null;
+    }
     
   } catch (e) {
     console.error('[VNet Reader] Failed to connect:', e);

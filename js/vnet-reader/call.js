@@ -77,45 +77,32 @@ export async function executeCall() {
     
     const callData = iface.encodeFunctionData(method.name, params.values);
     
-    // Execute call
-    const result = await state.provider.call({
-      to: targetAddress,
-      data: callData
-    });
+    // Execute calls in parallel: VNet and Production
+    const callParams = { to: targetAddress, data: callData };
     
-    // Decode result
-    let decoded;
-    let decodeSuccess = false;
+    const [vnetResult, productionResult] = await Promise.allSettled([
+      state.provider.call(callParams),
+      state.productionProvider 
+        ? state.productionProvider.call(callParams).catch(e => {
+            // Return error info instead of throwing
+            return { __error: true, message: e.reason || e.message || 'Call failed' };
+          })
+        : Promise.resolve({ __error: true, message: 'No production provider' })
+    ]);
     
-    if (outputTypes && outputTypes.length > 0) {
-      try {
-        decoded = iface.decodeFunctionResult(method.name, result);
-        // Convert to regular array/values for display
-        decoded = formatDecodedResult(decoded, outputTypes);
-        decodeSuccess = true;
-      } catch (e) {
-        console.warn('[VNet Reader] Decode with specified types failed:', e.message);
-        // Fall through to raw result
-      }
-    }
+    // Process VNet result
+    const vnetData = processCallResult(vnetResult, iface, method, outputTypes);
     
-    // If no output types specified, show raw hex directly (don't try to auto-decode)
-    // Only try auto-decode if we have output types but decoding failed
-    if (!decodeSuccess) {
-      if (outputTypes && outputTypes.length > 0 && result && result !== '0x') {
-        // Had output types but decoding failed, try auto-decode as fallback
-        decoded = tryAutoDecode(result);
-        if (decoded !== null) {
-          decodeSuccess = true;
-          outputSource = 'auto';
-        }
-      }
-      
-      // Final fallback: raw hex
-      if (!decodeSuccess) {
-        decoded = result;
-        outputSource = 'raw';
-      }
+    // Process Production result
+    const prodData = processCallResult(productionResult, iface, method, outputTypes);
+    
+    // Determine final output source
+    if (vnetData.decodeSuccess && vnetData.outputSource !== 'raw') {
+      outputSource = vnetData.outputSource;
+    } else if (!vnetData.decodeSuccess && outputTypes && outputTypes.length > 0) {
+      outputSource = 'auto';
+    } else if (!vnetData.decodeSuccess) {
+      outputSource = 'raw';
     }
     
     // Build full method signature with outputs
@@ -123,11 +110,12 @@ export async function executeCall() {
       ? `${method.name}(${method.inputs.join(',')})(${outputTypes.join(',')})`
       : signature;
     
-    // Show result
+    // Show result with comparison
     showResult({ 
-      success: true, 
-      data: decoded, 
-      raw: result,
+      success: true,
+      comparison: true,
+      vnet: vnetData,
+      production: prodData,
       method: fullSignature,
       target: targetAddress,
       outputSource,
@@ -139,7 +127,7 @@ export async function executeCall() {
       method: signature,
       target: targetAddress,
       params: params.display,
-      result: decoded,
+      result: vnetData.decoded,
       timestamp: Date.now()
     });
     
@@ -157,6 +145,79 @@ export async function executeCall() {
       target: targetAddress
     });
   }
+}
+
+/**
+ * Process the result of a contract call (from Promise.allSettled).
+ * @param {PromiseSettledResult} settledResult - The settled promise result
+ * @param {ethers.utils.Interface} iface - The ethers interface
+ * @param {Object} method - The method object
+ * @param {string[]} outputTypes - The output types
+ * @returns {Object} Processed result with decoded data
+ */
+function processCallResult(settledResult, iface, method, outputTypes) {
+  // Handle promise rejection
+  if (settledResult.status === 'rejected') {
+    return {
+      error: true,
+      message: settledResult.reason?.reason || settledResult.reason?.message || 'Call rejected',
+      raw: null,
+      decoded: null,
+      decodeSuccess: false
+    };
+  }
+  
+  const result = settledResult.value;
+  
+  // Handle error object returned from catch
+  if (result && result.__error) {
+    return {
+      error: true,
+      message: result.message,
+      raw: null,
+      decoded: null,
+      decodeSuccess: false
+    };
+  }
+  
+  // Decode result
+  let decoded;
+  let decodeSuccess = false;
+  let currentOutputSource = 'user';
+  
+  if (outputTypes && outputTypes.length > 0) {
+    try {
+      decoded = iface.decodeFunctionResult(method.name, result);
+      decoded = formatDecodedResult(decoded, outputTypes);
+      decodeSuccess = true;
+    } catch (e) {
+      console.warn('[VNet Reader] Decode with specified types failed:', e.message);
+    }
+  }
+  
+  // Try auto-decode if needed
+  if (!decodeSuccess) {
+    if (outputTypes && outputTypes.length > 0 && result && result !== '0x') {
+      decoded = tryAutoDecode(result);
+      if (decoded !== null) {
+        decodeSuccess = true;
+        currentOutputSource = 'auto';
+      }
+    }
+    
+    if (!decodeSuccess) {
+      decoded = result;
+      currentOutputSource = 'raw';
+    }
+  }
+  
+  return {
+    error: false,
+    raw: result,
+    decoded,
+    decodeSuccess,
+    outputSource: currentOutputSource
+  };
 }
 
 /**
@@ -552,7 +613,7 @@ export function showResult(result) {
   if (!container) return;
   
   if (result.loading) {
-    container.innerHTML = '<div class="result-loading">Calling...</div>';
+    container.innerHTML = '<div class="result-loading">Calling VNet and Production...</div>';
     return;
   }
   
@@ -568,12 +629,92 @@ export function showResult(result) {
     return;
   }
   
-  if (result.success) {
-    // Format data based on source
-    let sourceLabel = '';
+  if (result.success && result.comparison) {
+    // Comparison mode: show VNet and Production side by side
     const outputTypes = result.outputTypes || [];
     const idPrefix = `result-${Date.now()}`;
     
+    // Format source label
+    let sourceLabel = '';
+    if (result.outputSource === 'auto') {
+      sourceLabel = `<span class="result-source auto">Auto-detected</span>`;
+    } else if (result.outputSource === 'preset') {
+      sourceLabel = '<span class="result-source preset">Decoded from preset</span>';
+    } else if (result.outputSource === 'raw') {
+      sourceLabel = '<span class="result-source raw">Raw hex</span>';
+    } else {
+      sourceLabel = '<span class="result-source user">User-defined output</span>';
+    }
+    
+    // Build VNet result HTML
+    const vnetHtml = buildEnvResultHtml(result.vnet, outputTypes, `${idPrefix}-vnet`);
+    
+    // Build Production result HTML
+    const prodHtml = buildEnvResultHtml(result.production, outputTypes, `${idPrefix}-prod`);
+    
+    // Check if values are different
+    const isDifferent = checkValuesDifferent(result.vnet, result.production);
+    const diffClass = isDifferent ? 'values-different' : 'values-same';
+    
+    container.innerHTML = `
+      <div class="result-success result-comparison ${diffClass}">
+        <div class="result-meta">
+          <span>Method: ${escapeHtml(result.method)}</span>
+          <span>Target: ${escapeHtml(result.target)}</span>
+          ${sourceLabel}
+        </div>
+        <div class="comparison-container">
+          <div class="comparison-column vnet-column">
+            <div class="comparison-header">
+              <span class="env-badge vnet">🔮 VNet</span>
+              ${result.vnet.error ? '<span class="status-badge error">Failed</span>' : '<span class="status-badge success">OK</span>'}
+            </div>
+            <div class="comparison-content">
+              ${vnetHtml}
+            </div>
+          </div>
+          <div class="comparison-divider ${diffClass}">
+            ${isDifferent ? '<span class="diff-indicator" title="Values differ">≠</span>' : '<span class="same-indicator" title="Values match">=</span>'}
+          </div>
+          <div class="comparison-column prod-column">
+            <div class="comparison-header">
+              <span class="env-badge prod">🌐 Production</span>
+              ${result.production.error ? '<span class="status-badge error">Failed</span>' : '<span class="status-badge success">OK</span>'}
+            </div>
+            <div class="comparison-content">
+              ${prodHtml}
+            </div>
+          </div>
+        </div>
+        <div class="result-raw">
+          <details>
+            <summary>Raw Results</summary>
+            <div class="raw-comparison">
+              <div class="raw-item">
+                <strong>VNet:</strong>
+                <code>${result.vnet.raw ? escapeHtml(result.vnet.raw) : 'N/A'}</code>
+              </div>
+              <div class="raw-item">
+                <strong>Production:</strong>
+                <code>${result.production.raw ? escapeHtml(result.production.raw) : 'N/A'}</code>
+              </div>
+            </div>
+          </details>
+        </div>
+      </div>
+    `;
+    
+    // Initialize decimal selectors
+    initDecimalSelectors(container);
+    return;
+  }
+  
+  // Legacy single result mode (fallback)
+  if (result.success) {
+    const outputTypes = result.outputTypes || [];
+    const idPrefix = `result-${Date.now()}`;
+    
+    let sourceLabel = '';
     if (result.outputSource === 'auto' && result.data && result.data.detectedType) {
       sourceLabel = `<span class="result-source auto">Auto-detected: ${escapeHtml(result.data.detectedType)}</span>`;
     } else if (result.outputSource === 'preset') {
@@ -584,7 +725,6 @@ export function showResult(result) {
       sourceLabel = '<span class="result-source user">User-defined output</span>';
     }
     
-    // Format result data with rich HTML
     const formattedDataHtml = result.outputSource === 'raw'
       ? `<span class="result-value-raw">${escapeHtml(String(result.data))}</span>`
       : formatResultDataHtml(result.data, outputTypes, idPrefix);
@@ -608,10 +748,59 @@ export function showResult(result) {
       </div>
     `;
     
-    // Initialize decimal selectors
     initDecimalSelectors(container);
     return;
   }
   
   container.innerHTML = '<p class="result-placeholder">Call result will appear here</p>';
+}
+
+/**
+ * Build HTML for a single environment result in comparison mode.
+ * @param {Object} envResult - The environment result object
+ * @param {string[]} outputTypes - The output types
+ * @param {string} idPrefix - ID prefix for interactive elements
+ * @returns {string} HTML string
+ */
+function buildEnvResultHtml(envResult, outputTypes, idPrefix) {
+  if (envResult.error) {
+    return `<div class="env-error">${escapeHtml(envResult.message)}</div>`;
+  }
+  
+  if (envResult.outputSource === 'raw') {
+    return `<span class="result-value-raw">${escapeHtml(String(envResult.decoded))}</span>`;
+  }
+  
+  return formatResultDataHtml(envResult.decoded, outputTypes, idPrefix);
+}
+
+/**
+ * Check if VNet and Production values are different.
+ * @param {Object} vnetResult - VNet result object
+ * @param {Object} prodResult - Production result object
+ * @returns {boolean} True if values differ
+ */
+function checkValuesDifferent(vnetResult, prodResult) {
+  // If either has error, consider them different
+  if (vnetResult.error || prodResult.error) {
+    // If both have errors, consider same (both failed)
+    if (vnetResult.error && prodResult.error) {
+      return false;
+    }
+    return true;
+  }
+  
+  // Compare raw values if available
+  if (vnetResult.raw && prodResult.raw) {
+    return vnetResult.raw.toLowerCase() !== prodResult.raw.toLowerCase();
+  }
+  
+  // Compare decoded values
+  try {
+    const vnetStr = JSON.stringify(vnetResult.decoded);
+    const prodStr = JSON.stringify(prodResult.decoded);
+    return vnetStr !== prodStr;
+  } catch {
+    return String(vnetResult.decoded) !== String(prodResult.decoded);
+  }
 }
