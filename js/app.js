@@ -33,6 +33,11 @@ import {
   fetchContractInfo, 
   updateAddressDisplays 
 } from './core/contract-info.js';
+import {
+  fetchContractNames,
+  updateAddressWithNames,
+  clearNameCache
+} from './core/contract-name.js';
 
 /**
  * Application state.
@@ -145,6 +150,12 @@ function initEventListeners() {
   const vnetBtn = document.getElementById('vnet-reader-btn');
   if (vnetBtn) {
     vnetBtn.addEventListener('click', handleVnetReaderClick);
+  }
+  
+  // Clear cache button
+  const clearCacheBtn = document.getElementById('clear-cache-btn');
+  if (clearCacheBtn) {
+    clearCacheBtn.addEventListener('click', handleClearCache);
   }
 }
 
@@ -451,6 +462,21 @@ async function fetchAndDisplayContractInfo(chainId) {
       withSymbol 
     });
     
+    // Fetch contract names for addresses without symbols
+    try {
+      const nameMap = await fetchContractNames(addresses, contractInfoMap, chainId);
+      
+      // Update the DOM with contract name information
+      updateAddressWithNames(nameMap, getElementIdsForAddress);
+      
+      log('info', 'app', 'Contract name fetch complete', {
+        total: addresses.length,
+        withName: nameMap.size
+      });
+    } catch (e) {
+      log('error', 'app', 'Failed to fetch contract names', { error: e.message });
+    }
+    
   } catch (e) {
     // Non-fatal error - the main parsing result is still displayed
     log('error', 'app', 'Failed to fetch contract info', { error: e.message });
@@ -598,6 +624,29 @@ function handleVnetReaderClick() {
     rpc: state.vnetInfo.vnetRpcUrl, 
     addressCount: addresses.length 
   });
+}
+
+/**
+ * Handle click on the Clear Cache button.
+ * Clears all contract name cache from localStorage.
+ */
+function handleClearCache() {
+  const count = clearNameCache();
+  
+  // Show feedback to user
+  const btn = document.getElementById('clear-cache-btn');
+  if (btn) {
+    const originalText = btn.textContent;
+    btn.textContent = `✓ Cleared ${count} entries`;
+    btn.disabled = true;
+    
+    setTimeout(() => {
+      btn.textContent = originalText;
+      btn.disabled = false;
+    }, 2000);
+  }
+  
+  log('info', 'app', 'Cache cleared', { entriesRemoved: count });
 }
 
 // Initialize when DOM is ready

@@ -13,6 +13,7 @@ export const state = {
   provider: null,
   addresses: [],           // Addresses passed from main app
   addressSymbols: {},      // Map of address -> symbol (from main app or fetched)
+  addressContractNames: {}, // Map of address -> contract name (from Etherscan)
   sessionMethods: [],      // Custom methods used in this session
   sessionAddresses: [],    // Custom addresses used in this session
   callHistory: [],         // History of calls made in this session
@@ -31,6 +32,7 @@ export function resetState() {
   state.provider = null;
   state.addresses = [];
   state.addressSymbols = {};
+  state.addressContractNames = {};
   state.sessionMethods = [];
   state.sessionAddresses = [];
   state.callHistory = [];

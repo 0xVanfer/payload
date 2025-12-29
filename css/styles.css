@@ -185,6 +185,11 @@ body {
   background: #e1bee7;
 }
 
+.btn-small {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
 .btn-vnet {
   background: #10b981;
   color: white;
@@ -406,6 +411,17 @@ body {
  */
 .address-symbol {
   color: var(--color-primary);
+  font-size: 13px;
+  font-weight: 500;
+  margin-left: 2px;
+}
+
+/**
+ * Contract name display next to addresses (for non-token contracts).
+ * Shown when symbol is not available but Etherscan has contract name.
+ */
+.address-contract-name {
+  color: var(--color-secondary, #6c757d);
   font-size: 13px;
   font-weight: 500;
   margin-left: 2px;

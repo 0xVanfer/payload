@@ -50,11 +50,15 @@ export function debounce(func, wait) {
  * Format an address for display (abbreviated).
  * @param {string} address - The full address
  * @param {string} [symbol] - Optional symbol to prepend
+ * @param {string} [contractName] - Optional contract name to prepend (used if no symbol)
  * @returns {string} Formatted string
  */
-export function formatAddress(address, symbol = null) {
+export function formatAddress(address, symbol = null, contractName = null) {
   if (symbol) {
     return `${symbol} (${address.slice(0, 6)}...${address.slice(-4)})`;
+  }
+  if (contractName) {
+    return `${contractName} (${address.slice(0, 6)}...${address.slice(-4)})`;
   }
   return `${address.slice(0, 10)}...${address.slice(-8)}`;
 }

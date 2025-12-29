@@ -6,26 +6,7 @@
  */
 
 import { log } from '../core/abi-utils.js';
-
-/**
- * Etherscan API keys for rate limiting bypass.
- * Rotates through keys on each request.
- */
-const API_KEYS = [
-  'B74HQUR15VESEHDE1HWQSFF6HGDDJ8C9RH' // A public, free-plan key.
-];
-
-let apiKeyIndex = 0;
-
-/**
- * Get next API key in rotation.
- * @returns {string} API key
- */
-function getNextApiKey() {
-  const key = API_KEYS[apiKeyIndex];
-  apiKeyIndex = (apiKeyIndex + 1) % API_KEYS.length;
-  return key;
-}
+import { getNextApiKey, getApiUrl, isRoutescanChain } from '../config/etherscan-api.js';
 
 /**
  * Mapping of explorer domains to chain IDs.
@@ -133,27 +114,6 @@ function extractTxHash(url) {
 }
 
 /**
- * Chain IDs that use Routescan API instead of Etherscan V2 API.
- * Routescan supports etherscan API structure.
- */
-const ROUTESCAN_CHAINS = ['9745'];
-
-/**
- * Get the API URL for a given explorer chain.
- * Uses Etherscan V2 API for most chains, Routescan API for specific chains.
- * @param {string} chainId - The chain ID
- * @returns {string} The API base URL
- */
-function getApiUrl(chainId) {
-  // Routescan API for specific chains
-  if (ROUTESCAN_CHAINS.includes(chainId)) {
-    return `https://api.routescan.io/v2/network/mainnet/evm/${chainId}/etherscan/api`;
-  }
-  // Etherscan V2 API - unified endpoint for all EVM chains
-  return 'https://api.etherscan.io/v2/api';
-}
-
-/**
  * Parse an Etherscan-style transaction link.
  * Fetches transaction data from the explorer API.
  * 
@@ -184,7 +144,7 @@ async function parseEtherscanLink(url) {
   log('debug', 'etherscan', 'Extracted tx info', { chainId, txHash });
   
   const apiUrl = getApiUrl(chainId);
-  const isRoutescan = ROUTESCAN_CHAINS.includes(chainId);
+  const isRoutescan = isRoutescanChain(chainId);
   
   try {
     // Fetch transaction details with API key
@@ -193,7 +153,7 @@ async function parseEtherscanLink(url) {
     const fetchUrl = isRoutescan
       ? `${apiUrl}?module=proxy&action=eth_getTransactionByHash&txhash=${txHash}&apikey=${apiKey}`
       : `${apiUrl}?chainid=${chainId}&module=proxy&action=eth_getTransactionByHash&txhash=${txHash}&apikey=${apiKey}`;
-    log('debug', 'etherscan', 'Fetching transaction', { fetchUrl, keyIndex: apiKeyIndex });
+    log('debug', 'etherscan', 'Fetching transaction', { fetchUrl });
     
     const response = await fetch(fetchUrl);
     if (!response.ok) {

@@ -9,7 +9,7 @@
   <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js"></script>
   
   <!-- Styles -->
-  <link rel="stylesheet" href="css/styles.css?v=1.0.0">
+  <link rel="stylesheet" href="css/styles.css?v=1.0.2">
 </head>
 <body>
   <div class="container">
@@ -51,6 +51,10 @@
         
         <button id="vnet-reader-btn" class="btn btn-vnet hidden" title="Read contract state on Tenderly VNet">
           📖 Read on VNet
+        </button>
+        
+        <button id="clear-cache-btn" class="btn btn-secondary btn-small" title="Clear contract name cache">
+          🗑️ Clear Cache
         </button>
       </div>
       
@@ -102,6 +106,6 @@ event Transfer(address indexed,address indexed,uint256)
   </div>
   
   <!-- Application Script -->
-  <script type="module" src="js/app.js?v=1.0.4"></script>
+  <script type="module" src="js/app.js?v=1.0.7"></script>
 </body>
 </html>

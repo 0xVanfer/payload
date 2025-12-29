@@ -6,43 +6,7 @@
  */
 
 import { state } from './state.js';
-
-/**
- * Etherscan API keys for rate limiting bypass.
- * Same keys as used in etherscan.js.
- */
-const API_KEYS = [
-  'B74HQUR15VESEHDE1HWQSFF6HGDDJ8C9RH'
-];
-
-let apiKeyIndex = 0;
-
-/**
- * Get next API key in rotation.
- * @returns {string} API key
- */
-function getNextApiKey() {
-  const key = API_KEYS[apiKeyIndex];
-  apiKeyIndex = (apiKeyIndex + 1) % API_KEYS.length;
-  return key;
-}
-
-/**
- * Chain IDs that use Routescan API instead of Etherscan V2 API.
- */
-const ROUTESCAN_CHAINS = ['9745'];
-
-/**
- * Get the API URL for a given chain.
- * @param {string} chainId - The chain ID
- * @returns {string} The API base URL
- */
-function getApiUrl(chainId) {
-  if (ROUTESCAN_CHAINS.includes(chainId)) {
-    return `https://api.routescan.io/v2/network/mainnet/evm/${chainId}/etherscan/api`;
-  }
-  return 'https://api.etherscan.io/v2/api';
-}
+import { getNextApiKey, getApiUrl, isRoutescanChain } from '../config/etherscan-api.js';
 
 /**
  * Fetch contract ABI from Etherscan API.
@@ -54,7 +18,7 @@ function getApiUrl(chainId) {
 export async function fetchContractABI(address, chainId) {
   const normalizedChainId = String(chainId);
   const apiUrl = getApiUrl(normalizedChainId);
-  const isRoutescan = ROUTESCAN_CHAINS.includes(normalizedChainId);
+  const isRoutescan = isRoutescanChain(normalizedChainId);
   const apiKey = getNextApiKey();
   
   console.log('[ABI Fetcher] Fetching ABI', { address, chainId: normalizedChainId });

@@ -1,7 +1,7 @@
 /**
  * VNet Reader Address Module
  * 
- * Handles address selection, symbol fetching, and address validation.
+ * Handles address selection, symbol fetching, contract name fetching, and address validation.
  */
 
 import { state } from './state.js';
@@ -9,6 +9,8 @@ import { isValidAddress, formatAddress, debounce } from './utils.js';
 import { getAddressExplorerUrl } from './connection.js';
 import { loadContractABI, hasContractABI } from './abi-fetcher.js';
 import { addContractABICategory } from './method.js';
+import { getFromCache, saveToCache } from '../core/contract-name.js';
+import { getNextApiKey, getApiUrl, isRoutescanChain } from '../config/etherscan-api.js';
 
 /**
  * Initialize the address selector with discovered addresses.
@@ -28,6 +30,8 @@ export async function initAddressSelector() {
   // Fetch symbols for all discovered addresses first
   if (state.addresses.length > 0 && state.provider) {
     await fetchAllAddressSymbols(state.addresses);
+    // Fetch contract names for addresses without symbols
+    await fetchAllContractNames(state.addresses);
   }
   
   // Add discovered addresses, sorted by symbol presence
@@ -168,6 +172,179 @@ export async function fetchAllAddressSymbols(addresses) {
 }
 
 /**
+ * Fetch contract names for addresses without symbols.
+ * Uses Etherscan API via cache module.
+ * @param {string[]} addresses - The addresses to fetch names for
+ */
+export async function fetchAllContractNames(addresses) {
+  // Filter addresses without symbols
+  const addressesWithoutSymbol = addresses.filter(addr => 
+    !state.addressSymbols[addr.toLowerCase()]
+  );
+  
+  if (addressesWithoutSymbol.length === 0) return;
+  
+  console.log('[Address] Fetching contract names for', addressesWithoutSymbol.length, 'addresses');
+  
+  const promises = addressesWithoutSymbol.map(async (address) => {
+    const normalizedAddr = address.toLowerCase();
+    
+    // Skip if already cached in state
+    if (state.addressContractNames[normalizedAddr]) return;
+    
+    // Check browser cache first
+    const cached = getFromCache(state.chainId, address);
+    if (cached !== null) {
+      if (cached.name) {
+        state.addressContractNames[normalizedAddr] = cached.name;
+      }
+      return;
+    }
+    
+    // Fetch from Etherscan
+    try {
+      const name = await fetchSingleContractName(address, state.chainId);
+      if (name) {
+        state.addressContractNames[normalizedAddr] = name;
+      }
+      // Save to browser cache
+      saveToCache(state.chainId, address, name);
+    } catch (e) {
+      console.log('[Address] Failed to fetch contract name', { address, error: e.message });
+    }
+  });
+  
+  // Wait for all with a timeout
+  await Promise.race([
+    Promise.all(promises),
+    new Promise(resolve => setTimeout(resolve, 10000)) // 10 second timeout
+  ]);
+  
+  console.log('[Address] Contract names fetched', { 
+    count: Object.keys(state.addressContractNames).length 
+  });
+}
+
+/**
+ * Proxy contract names that should trigger implementation lookup.
+ * @type {string[]}
+ */
+const PROXY_CONTRACT_NAMES = [
+  'Proxy',
+  'TransparentUpgradeableProxy',
+  'ERC1967Proxy',
+  'BeaconProxy',
+  'AdminUpgradeabilityProxy',
+  'OwnedUpgradeabilityProxy',
+  'InitializableAdminUpgradeabilityProxy'
+];
+
+/**
+ * Check if a contract name indicates a proxy contract.
+ * @param {string} name - The contract name
+ * @returns {boolean} True if it's a proxy contract
+ */
+function isProxyContractName(name) {
+  if (!name) return false;
+  return PROXY_CONTRACT_NAMES.some(proxyName => 
+    name === proxyName || name.endsWith(proxyName)
+  );
+}
+
+/**
+ * Fetch contract name for a single address from Etherscan.
+ * If the contract is a proxy, also fetches the implementation contract name.
+ * @param {string} address - The contract address
+ * @param {string} chainId - The chain ID
+ * @returns {Promise<string|null>} Contract name or null
+ */
+async function fetchSingleContractName(address, chainId) {
+  const normalizedChainId = String(chainId);
+  const apiUrl = getApiUrl(normalizedChainId);
+  const isRoutescan = isRoutescanChain(normalizedChainId);
+  const apiKey = getNextApiKey();
+  
+  const fetchUrl = isRoutescan
+    ? `${apiUrl}?module=contract&action=getsourcecode&address=${address}&apikey=${apiKey}`
+    : `${apiUrl}?chainid=${normalizedChainId}&module=contract&action=getsourcecode&address=${address}&apikey=${apiKey}`;
+  
+  try {
+    const response = await fetch(fetchUrl);
+    if (!response.ok) return null;
+    
+    const data = await response.json();
+    
+    if (data.status === '1' && data.result && data.result[0]) {
+      const contractInfo = data.result[0];
+      const contractName = contractInfo.ContractName;
+      
+      if (contractName && contractName !== '' && contractName !== 'Contract source code not verified') {
+        // Check if it's a proxy contract and has implementation address
+        const implAddress = contractInfo.Implementation;
+        if (isProxyContractName(contractName) && implAddress && implAddress !== '') {
+          console.log('[Address] Proxy detected, fetching implementation name', { 
+            address, 
+            proxyName: contractName,
+            implementation: implAddress 
+          });
+          
+          // Fetch implementation contract name
+          const implName = await fetchImplementationName(implAddress, normalizedChainId);
+          
+          if (implName) {
+            return `${implName}(Proxy)`;
+          }
+        }
+        
+        return contractName;
+      }
+    }
+    
+    return null;
+  } catch (e) {
+    console.log('[Address] Failed to fetch contract name', { address, error: e.message });
+    return null;
+  }
+}
+
+/**
+ * Fetch contract name for an implementation address.
+ * @param {string} address - The implementation contract address
+ * @param {string} chainId - The chain ID
+ * @returns {Promise<string|null>} Contract name or null
+ */
+async function fetchImplementationName(address, chainId) {
+  const apiUrl = getApiUrl(chainId);
+  const isRoutescan = isRoutescanChain(chainId);
+  const apiKey = getNextApiKey();
+  
+  const fetchUrl = isRoutescan
+    ? `${apiUrl}?module=contract&action=getsourcecode&address=${address}&apikey=${apiKey}`
+    : `${apiUrl}?chainid=${chainId}&module=contract&action=getsourcecode&address=${address}&apikey=${apiKey}`;
+  
+  try {
+    const response = await fetch(fetchUrl);
+    if (!response.ok) return null;
+    
+    const data = await response.json();
+    
+    if (data.status === '1' && data.result && data.result[0]) {
+      const contractInfo = data.result[0];
+      const contractName = contractInfo.ContractName;
+      
+      if (contractName && contractName !== '' && contractName !== 'Contract source code not verified') {
+        return contractName;
+      }
+    }
+    
+    return null;
+  } catch (e) {
+    console.log('[Address] Failed to fetch implementation name', { address, error: e.message });
+    return null;
+  }
+}
+
+/**
  * Sort addresses by symbol presence (addresses with symbols first).
  * @param {string[]} addresses - The addresses to sort
  * @returns {string[]} Sorted addresses
@@ -176,6 +353,8 @@ export function sortAddressesBySymbol(addresses) {
   return [...addresses].sort((a, b) => {
     const symbolA = state.addressSymbols[a.toLowerCase()];
     const symbolB = state.addressSymbols[b.toLowerCase()];
+    const nameA = state.addressContractNames[a.toLowerCase()];
+    const nameB = state.addressContractNames[b.toLowerCase()];
     
     // Both have symbols - sort alphabetically by symbol
     if (symbolA && symbolB) {
@@ -185,20 +364,29 @@ export function sortAddressesBySymbol(addresses) {
     if (symbolA && !symbolB) return -1;
     // Only b has symbol - b comes first
     if (!symbolA && symbolB) return 1;
-    // Neither has symbol - maintain original order
+    
+    // Neither has symbol - check contract names
+    if (nameA && nameB) {
+      return nameA.localeCompare(nameB);
+    }
+    if (nameA && !nameB) return -1;
+    if (!nameA && nameB) return 1;
+    
+    // Neither has symbol nor contract name - maintain original order
     return 0;
   });
 }
 
 /**
  * Format an address for display in the dropdown.
- * Shows symbol first if available for easy identification.
+ * Shows symbol first if available, then contract name, for easy identification.
  * @param {string} address - The address
  * @returns {string} Formatted string
  */
 export function formatAddressOption(address) {
   const symbol = state.addressSymbols[address.toLowerCase()];
-  return formatAddress(address, symbol);
+  const contractName = state.addressContractNames[address.toLowerCase()];
+  return formatAddress(address, symbol, contractName);
 }
 
 /**
