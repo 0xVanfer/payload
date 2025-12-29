@@ -321,7 +321,7 @@ async function findAndDecodeNestedBytes(params, parentPath = '') {
 function isDecodableBytes(value) {
   if (typeof value !== 'string') return false;
   if (!value.startsWith('0x')) return false;
-  if (value.length <= 10) return false; // Too short to contain function call
+  if (value.length < 10) return false; // Must be at least 4 bytes (selector only, no params)
   if (value.startsWith('0x00000000')) return false; // Likely just data, not a call
   return true;
 }

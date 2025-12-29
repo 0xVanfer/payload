@@ -175,11 +175,16 @@ async function testPayloadSplitting() {
 async function testHelperFunctions() {
   console.log('\n--- Helper Function Tests ---\n');
   
-  await TestRunner.test('isDecodableBytes - valid bytes', () => {
+  await TestRunner.test('isDecodableBytes - valid bytes with params', () => {
     TestRunner.assertTrue(isDecodableBytes('0xa9059cbb0000000000'));
   });
   
-  await TestRunner.test('isDecodableBytes - too short', () => {
+  await TestRunner.test('isDecodableBytes - valid bytes selector only (4 bytes)', () => {
+    // 4 bytes selector without params should be decodable (e.g., parameterless function)
+    TestRunner.assertTrue(isDecodableBytes('0x563a7611'));
+  });
+  
+  await TestRunner.test('isDecodableBytes - too short (less than 4 bytes)', () => {
     TestRunner.assertTrue(!isDecodableBytes('0xa905'));
   });
   
