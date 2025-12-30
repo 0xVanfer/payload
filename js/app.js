@@ -5,8 +5,9 @@
  * user interactions.
  * 
  * Post-processing features:
- * - Fetches contract info (symbol, decimals) for all discovered addresses
- * - Updates rendered addresses with token symbols
+ * - Fetches contract info (symbol) for all discovered addresses
+ * - Updates rendered addresses with token symbols or names
+ * - Supports global (chainId 0) address names
  */
 
 import { log } from './core/abi-utils.js';
@@ -39,7 +40,11 @@ import {
   fetchContractNames,
   updateAddressWithNames
 } from './core/contract-name.js';
-import { needsMigration, migrateOldCache } from './core/cache-manager.js';
+import { 
+  needsMigration, 
+  migrateOldCache,
+  getAddressDisplayName 
+} from './core/cache-manager.js';
 
 /**
  * Application state.
@@ -426,13 +431,19 @@ async function handleMultiplePayloads(payloads, chainId, label, outputDiv) {
 }
 
 /**
- * Fetch contract info (symbol, decimals) for all collected addresses
- * and update the rendered display with token symbols.
+ * Fetch contract info (symbol) for all collected addresses
+ * and update the rendered display with token symbols or names.
  * 
- * This function runs after the main render is complete. It:
- * 1. Gets all unique addresses from the address collector
- * 2. First renders cached info immediately
- * 3. Then fetches uncached addresses via RPC and renders them
+ * Priority order for display name:
+ * 1. customName from global cache (chainId 0)
+ * 2. customName from chain-specific cache
+ * 3. symbol from chain-specific cache
+ * 4. name from global cache (chainId 0)
+ * 5. name from chain-specific cache
+ * 6. Fetch symbol via RPC
+ * 7. Fetch name via Etherscan API
+ * 
+ * This function runs after the main render is complete.
  * 
  * @param {string|number} chainId - The chain ID to query
  * @returns {Promise<void>}
@@ -453,64 +464,96 @@ async function fetchAndDisplayContractInfo(chainId) {
     chainId 
   });
   
-  // Step 1: Get cached info and render immediately
-  const { cachedMap, uncachedAddresses } = getContractInfoFromCache(addresses, chainId);
+  // Step 1: Check for cached display names (including global chainId 0)
+  // This immediately renders any addresses with cached customName, symbol, or name
+  const cachedDisplayMap = new Map();
+  const addressesNeedingLookup = [];
   
-  if (cachedMap.size > 0) {
-    // Render cached info immediately
-    updateAddressDisplays(cachedMap, getElementIdsForAddress);
-    log('info', 'app', 'Rendered cached contract info', { count: cachedMap.size });
-    
-    // Fetch contract names for cached addresses without symbols
-    try {
-      const cachedAddresses = Array.from(cachedMap.keys());
-      const nameMap = await fetchContractNames(cachedAddresses, cachedMap, chainId);
-      updateAddressWithNames(nameMap, getElementIdsForAddress);
-    } catch (e) {
-      log('error', 'app', 'Failed to fetch contract names for cached', { error: e.message });
+  for (const address of addresses) {
+    const { displayName, source } = getAddressDisplayName(chainId, address);
+    if (displayName) {
+      cachedDisplayMap.set(address, { 
+        address, 
+        symbol: displayName,  // Use displayName as symbol for rendering
+        isContract: true,
+        source
+      });
+      log('debug', 'app', 'Found cached display name', { address, displayName, source });
+    } else {
+      addressesNeedingLookup.push(address);
     }
+  }
+  
+  // Render cached display names immediately
+  if (cachedDisplayMap.size > 0) {
+    updateAddressDisplays(cachedDisplayMap, getElementIdsForAddress);
+    log('info', 'app', 'Rendered cached display names', { count: cachedDisplayMap.size });
   }
   
   // Update VNet button visibility after cached info is rendered
   updateVnetButtonVisibility();
   
-  // Step 2: If no uncached addresses, we're done
-  if (uncachedAddresses.length === 0) {
-    log('info', 'app', 'All addresses were cached, no RPC needed');
+  // Step 2: If all addresses have cached display names, we're done
+  if (addressesNeedingLookup.length === 0) {
+    log('info', 'app', 'All addresses have cached display names, no RPC/API needed');
     return;
   }
   
-  // Check if RPC is available for this chain
+  log('info', 'app', 'Addresses needing lookup', { count: addressesNeedingLookup.length });
+  
+  // Step 3: Check if RPC is available and fetch symbols
   const rpcUrl = getRpcUrl(chainId);
-  if (!rpcUrl) {
-    log('warn', 'app', 'No RPC URL configured for chain, skipping uncached addresses', { chainId });
-    return;
-  }
-  
-  // Step 3: Fetch uncached addresses via RPC
-  try {
-    const rpcInfoMap = await fetchContractInfoFromRpc(uncachedAddresses, chainId);
-    
-    if (rpcInfoMap.size > 0) {
-      // Render RPC-fetched info
-      updateAddressDisplays(rpcInfoMap, getElementIdsForAddress);
+  if (rpcUrl) {
+    try {
+      const rpcInfoMap = await fetchContractInfoFromRpc(addressesNeedingLookup, chainId);
       
-      const withSymbol = Array.from(rpcInfoMap.values()).filter(info => info.symbol).length;
-      log('info', 'app', 'Rendered RPC contract info', { total: rpcInfoMap.size, withSymbol });
+      if (rpcInfoMap.size > 0) {
+        // Render RPC-fetched symbols
+        updateAddressDisplays(rpcInfoMap, getElementIdsForAddress);
+        
+        const withSymbol = Array.from(rpcInfoMap.values()).filter(info => info.symbol).length;
+        log('info', 'app', 'Rendered RPC contract symbols', { total: rpcInfoMap.size, withSymbol });
+        
+        // Filter out addresses that got symbols
+        const addressesWithoutSymbol = addressesNeedingLookup.filter(addr => {
+          const info = rpcInfoMap.get(addr);
+          return !info || !info.symbol;
+        });
+        
+        // Step 4: Fetch contract names for addresses without symbols
+        if (addressesWithoutSymbol.length > 0) {
+          try {
+            const nameMap = await fetchContractNames(addressesWithoutSymbol, rpcInfoMap, chainId);
+            updateAddressWithNames(nameMap, getElementIdsForAddress);
+            log('info', 'app', 'Contract name fetch complete', { withName: nameMap.size });
+          } catch (e) {
+            log('error', 'app', 'Failed to fetch contract names', { error: e.message });
+          }
+        }
+      }
+    } catch (e) {
+      log('error', 'app', 'Failed to fetch contract info via RPC', { error: e.message });
       
-      // Fetch contract names for RPC addresses without symbols
+      // Still try to fetch names even if RPC failed
       try {
-        const nameMap = await fetchContractNames(uncachedAddresses, rpcInfoMap, chainId);
+        const emptyMap = new Map();
+        const nameMap = await fetchContractNames(addressesNeedingLookup, emptyMap, chainId);
         updateAddressWithNames(nameMap, getElementIdsForAddress);
-        log('info', 'app', 'Contract name fetch complete for RPC addresses', { withName: nameMap.size });
-      } catch (e) {
-        log('error', 'app', 'Failed to fetch contract names for RPC addresses', { error: e.message });
+      } catch (e2) {
+        log('error', 'app', 'Failed to fetch contract names after RPC failure', { error: e2.message });
       }
     }
+  } else {
+    log('warn', 'app', 'No RPC URL configured for chain, trying name lookup only', { chainId });
     
-  } catch (e) {
-    // Non-fatal error - the main parsing result is still displayed
-    log('error', 'app', 'Failed to fetch contract info via RPC', { error: e.message });
+    // No RPC, try to fetch names directly
+    try {
+      const emptyMap = new Map();
+      const nameMap = await fetchContractNames(addressesNeedingLookup, emptyMap, chainId);
+      updateAddressWithNames(nameMap, getElementIdsForAddress);
+    } catch (e) {
+      log('error', 'app', 'Failed to fetch contract names', { error: e.message });
+    }
   }
 }
 

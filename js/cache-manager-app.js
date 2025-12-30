@@ -3,6 +3,11 @@
  * 
  * Main application logic for the cache management page.
  * Handles UI rendering, user interactions, and cache operations.
+ * 
+ * Features:
+ * - Support for chainId 0 (global addresses that apply to all chains)
+ * - Custom name support for addresses
+ * - Only cache manager UI can write to chainId 0
  */
 
 import {
@@ -15,7 +20,8 @@ import {
   importCache,
   getCacheStats,
   migrateOldCache,
-  needsMigration
+  needsMigration,
+  GLOBAL_CHAIN_ID
 } from './core/cache-manager.js';
 
 import { getChainName, getAllChainIds, getRpcUrl } from './config/chains.js';
@@ -28,6 +34,18 @@ const state = {
   expandedItems: new Set(),
   isAddingAddress: false
 };
+
+/**
+ * Get display name for a chain ID.
+ * @param {string} chainId - The chain ID
+ * @returns {string} Display name
+ */
+function getChainDisplayName(chainId) {
+  if (chainId === GLOBAL_CHAIN_ID) {
+    return '🌐 Global (All Chains)';
+  }
+  return getChainName(chainId) || `Chain ${chainId}`;
+}
 
 /**
  * Initialize the application.
@@ -95,9 +113,12 @@ function renderContractList() {
   
   const byChain = getContractCacheByChain();
   const chainIds = Object.keys(byChain).sort((a, b) => {
+    // Global chain (0) should come first
+    if (a === GLOBAL_CHAIN_ID) return -1;
+    if (b === GLOBAL_CHAIN_ID) return 1;
     // Sort by chain name
-    const nameA = getChainName(a) || `Chain ${a}`;
-    const nameB = getChainName(b) || `Chain ${b}`;
+    const nameA = getChainDisplayName(a);
+    const nameB = getChainDisplayName(b);
     return nameA.localeCompare(nameB);
   });
   
@@ -110,11 +131,12 @@ function renderContractList() {
   
   for (const chainId of chainIds) {
     const contracts = byChain[chainId];
-    const chainName = getChainName(chainId) || `Chain ${chainId}`;
+    const chainName = getChainDisplayName(chainId);
+    const isGlobal = chainId === GLOBAL_CHAIN_ID;
     
     html += `
-      <div class="chain-group" data-chain="${chainId}">
-        <div class="chain-header">
+      <div class="chain-group ${isGlobal ? 'chain-group-global' : ''}" data-chain="${chainId}">
+        <div class="chain-header ${isGlobal ? 'chain-header-global' : ''}">
           <span class="chain-name">${chainName}</span>
           <span class="chain-count">${contracts.length}</span>
         </div>
@@ -147,16 +169,19 @@ function renderContractList() {
 function renderContractItem(chainId, address, data) {
   const itemKey = `${chainId}:${address}`;
   const isExpanded = state.expandedItems.has(itemKey);
+  const isGlobal = chainId === GLOBAL_CHAIN_ID;
   
-  // Build label
-  const label = data.symbol || data.name || '';
+  // Build label - customName takes priority
+  const label = data.customName || data.symbol || data.name || '';
   
   // Build badges
   const badges = [];
+  if (data.customName) badges.push('<span class="badge badge-custom">Custom</span>');
   if (data.symbol) badges.push('<span class="badge badge-symbol">Symbol</span>');
   if (data.abi) badges.push('<span class="badge badge-abi">ABI</span>');
   if (data.vnetDefault) badges.push('<span class="badge badge-vnet">VNet</span>');
   if (data.isProxy) badges.push('<span class="badge badge-proxy">Proxy</span>');
+  if (isGlobal) badges.push('<span class="badge badge-global">Global</span>');
   
   // Build ABI preview
   let abiPreview = '';
@@ -167,7 +192,7 @@ function renderContractItem(chainId, address, data) {
   }
   
   return `
-    <div class="contract-item ${isExpanded ? 'expanded' : ''}" data-chain="${chainId}" data-address="${address}">
+    <div class="contract-item ${isExpanded ? 'expanded' : ''} ${isGlobal ? 'contract-item-global' : ''}" data-chain="${chainId}" data-address="${address}">
       <div class="contract-item-header">
         <div class="contract-info-summary">
           <span class="contract-address">${address}</span>
@@ -185,15 +210,20 @@ function renderContractItem(chainId, address, data) {
             <span class="detail-label">Address</span>
             <span class="detail-value mono">${address}</span>
           </div>
-          <!-- Symbol -->
+          <!-- Custom Name (highest priority, editable) -->
           <div class="detail-row">
-            <span class="detail-label">Symbol</span>
+            <span class="detail-label">Custom Name</span>
+            <input type="text" class="detail-input custom-name-input" value="${data.customName || ''}" placeholder="Enter custom name (overrides all)...">
+          </div>
+          <!-- Symbol (from RPC) -->
+          <div class="detail-row">
+            <span class="detail-label">Symbol (RPC)</span>
             <span class="detail-value ${data.symbol ? '' : 'empty'}">${data.symbol || 'Not available'}</span>
           </div>
-          <!-- Decimals -->
+          <!-- Contract Name (from Etherscan) -->
           <div class="detail-row">
-            <span class="detail-label">Decimals</span>
-            <span class="detail-value ${data.decimals != null ? '' : 'empty'}">${data.decimals != null ? data.decimals : 'Not available'}</span>
+            <span class="detail-label">Contract Name (Etherscan)</span>
+            <span class="detail-value ${data.name ? '' : 'empty'}">${data.name || 'Not available'}</span>
           </div>
           <!-- ABI -->
           <div class="detail-row">
@@ -207,15 +237,10 @@ function renderContractItem(chainId, address, data) {
             <span class="detail-value mono">${data.implementation || 'Unknown'}</span>
           </div>
           ` : ''}
-          <!-- Contract Name (editable) -->
-          <div class="detail-row">
-            <span class="detail-label">Contract Name (editable)</span>
-            <input type="text" class="detail-input name-input" value="${data.name || ''}" placeholder="Enter contract name...">
-          </div>
           <!-- VNet Default Toggle -->
           <div class="detail-row">
             <div class="toggle-row">
-              <input type="checkbox" class="toggle-checkbox vnet-checkbox" ${data.vnetDefault ? 'checked' : ''}>
+              <input type="checkbox" class="toggle-checkbox vnet-checkbox" ${data.vnetDefault ? 'checked' : ''}>>
               <label class="toggle-label">Show in VNet dropdown by default</label>
             </div>
           </div>
@@ -263,13 +288,13 @@ function attachContractItemListeners() {
       const chainId = item.dataset.chain;
       const address = item.dataset.address;
       
-      const nameInput = item.querySelector('.name-input');
+      const customNameInput = item.querySelector('.custom-name-input');
       const vnetCheckbox = item.querySelector('.vnet-checkbox');
       
-      const name = nameInput?.value.trim() || null;
+      const customName = customNameInput?.value.trim() || null;
       const vnetDefault = vnetCheckbox?.checked || false;
       
-      setContractCache(chainId, address, { name, vnetDefault });
+      setContractCache(chainId, address, { customName, vnetDefault });
       showToast('Changes saved', 'success');
       
       // Re-render to update badges and labels
@@ -450,17 +475,21 @@ function showConfirm(title, message, onConfirm) {
 
 /**
  * Show add address dialog.
+ * Supports adding addresses with custom names and chainId 0 (global).
  */
 function showAddAddressDialog() {
   const overlay = document.createElement('div');
   overlay.className = 'confirm-overlay';
   overlay.id = 'add-address-overlay';
   
-  // Build chain options
+  // Build chain options - include global option at the top
   const chainIds = getAllChainIds();
-  const chainOptions = chainIds.map(chainId => 
-    `<option value="${chainId}">${chainId} - ${getChainName(chainId)}</option>`
-  ).join('');
+  const chainOptions = [
+    `<option value="${GLOBAL_CHAIN_ID}">🌐 0 - Global (All Chains)</option>`,
+    ...chainIds.map(chainId => 
+      `<option value="${chainId}">${chainId} - ${getChainName(chainId)}</option>`
+    )
+  ].join('');
   
   overlay.innerHTML = `
     <div class="add-address-dialog">
@@ -471,10 +500,16 @@ function showAddAddressDialog() {
           <select id="dialog-chain-select" class="form-select">
             ${chainOptions}
           </select>
+          <small class="form-hint">Select "Global" to apply name to all chains</small>
         </div>
         <div class="form-group">
           <label class="form-label">Contract Address</label>
           <input type="text" id="dialog-address-input" class="form-input" placeholder="0x...">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Custom Name (optional)</label>
+          <input type="text" id="dialog-custom-name-input" class="form-input" placeholder="Enter custom name...">
+          <small class="form-hint">Custom name overrides symbol and contract name</small>
         </div>
         <div id="dialog-add-status" class="add-status"></div>
         <div class="add-address-actions">
@@ -518,6 +553,7 @@ function showAddAddressDialog() {
 
 /**
  * Handle add address from dialog.
+ * For chainId 0 (global), only custom name is saved - no RPC/API fetch.
  * @param {HTMLElement} overlay - The dialog overlay element
  */
 async function handleAddAddressFromDialog(overlay) {
@@ -525,11 +561,14 @@ async function handleAddAddressFromDialog(overlay) {
   
   const chainSelect = overlay.querySelector('#dialog-chain-select');
   const addressInput = overlay.querySelector('#dialog-address-input');
+  const customNameInput = overlay.querySelector('#dialog-custom-name-input');
   const fetchBtn = overlay.querySelector('#dialog-fetch-btn');
   const statusEl = overlay.querySelector('#dialog-add-status');
   
   const chainId = chainSelect?.value;
   const address = addressInput?.value.trim();
+  const customName = customNameInput?.value.trim() || null;
+  const isGlobal = chainId === GLOBAL_CHAIN_ID;
   
   // Validate address
   if (!address) {
@@ -542,66 +581,91 @@ async function handleAddAddressFromDialog(overlay) {
     return;
   }
   
+  // For global chain, require custom name
+  if (isGlobal && !customName) {
+    updateDialogStatus(statusEl, 'Custom name is required for global addresses', 'error');
+    return;
+  }
+  
   const normalizedAddress = ethers.utils.getAddress(address);
   
   // Check if already exists
   const existing = getContractCache(chainId, normalizedAddress);
-  const hasSymbolOrName = existing && (existing.symbol || existing.name);
-  if (existing && (existing.symbol || existing.abi || existing.name)) {
-    updateDialogStatus(statusEl, 'Address already in cache. Refreshing...', 'loading');
+  const hasSymbolOrName = existing && (existing.symbol || existing.name || existing.customName);
+  if (existing && (existing.symbol || existing.abi || existing.name || existing.customName)) {
+    updateDialogStatus(statusEl, 'Address already in cache. Updating...', 'loading');
   }
   
   // Set loading state
   state.isAddingAddress = true;
   fetchBtn.disabled = true;
-  updateDialogStatus(statusEl, 'Fetching contract info...', 'loading');
   
   try {
     const result = {
       symbol: existing?.symbol || null,
-      decimals: existing?.decimals ?? null,
       name: existing?.name || null,
+      customName: customName || existing?.customName || null,
       abi: existing?.abi || null,
       isProxy: existing?.isProxy || false,
       implementation: existing?.implementation || null
     };
     
-    // Step 1: Fetch symbol and decimals via RPC (Multicall)
-    // Skip if we already have symbol or name in cache
-    if (!hasSymbolOrName) {
-      updateDialogStatus(statusEl, 'Fetching symbol & decimals...', 'loading');
-      const tokenInfo = await fetchTokenInfo(normalizedAddress, chainId);
-      if (tokenInfo) {
-        result.symbol = tokenInfo.symbol;
-        result.decimals = tokenInfo.decimals;
-      }
-    }
-    
-    // Step 2: Fetch contract name and ABI via Etherscan API
-    updateDialogStatus(statusEl, 'Fetching contract name & ABI...', 'loading');
-    const contractInfo = await fetchContractInfo(normalizedAddress, chainId);
-    if (contractInfo) {
-      // Only update name if not already set
-      if (!result.name) result.name = contractInfo.name;
-      result.abi = contractInfo.abi;
-      result.isProxy = contractInfo.isProxy;
-      result.implementation = contractInfo.implementation;
-    }
-    
-    // Save to cache
-    setContractCache(chainId, normalizedAddress, result);
-    
-    // Build success message
-    const found = [];
-    if (result.symbol) found.push('Symbol');
-    if (result.name) found.push('Name');
-    if (result.abi) found.push('ABI');
-    
-    if (found.length > 0) {
-      updateDialogStatus(statusEl, `✓ Saved: ${found.join(', ')}`, 'success');
-      showToast(`Contract added: ${normalizedAddress.slice(0, 10)}...`, 'success');
+    // For global chain (chainId 0), only save custom name - no RPC/API fetch
+    if (isGlobal) {
+      updateDialogStatus(statusEl, 'Saving global address...', 'loading');
+      result.customName = customName;
+      
+      // Save to cache
+      setContractCache(chainId, normalizedAddress, result);
+      
+      updateDialogStatus(statusEl, `✓ Saved global address with name: ${customName}`, 'success');
+      showToast(`Global address added: ${normalizedAddress.slice(0, 10)}...`, 'success');
     } else {
-      updateDialogStatus(statusEl, '⚠ Address saved but no contract info found', 'success');
+      // For specific chains, fetch info from RPC/API
+      updateDialogStatus(statusEl, 'Fetching contract info...', 'loading');
+      
+      // Step 1: Fetch symbol via RPC (Multicall)
+      // Skip if we already have symbol or name in cache
+      if (!hasSymbolOrName) {
+        updateDialogStatus(statusEl, 'Fetching symbol...', 'loading');
+        const tokenInfo = await fetchTokenInfo(normalizedAddress, chainId);
+        if (tokenInfo) {
+          result.symbol = tokenInfo.symbol;
+        }
+      }
+      
+      // Step 2: Fetch contract name and ABI via Etherscan API
+      updateDialogStatus(statusEl, 'Fetching contract name & ABI...', 'loading');
+      const contractInfo = await fetchContractInfo(normalizedAddress, chainId);
+      if (contractInfo) {
+        // Only update name if not already set
+        if (!result.name) result.name = contractInfo.name;
+        result.abi = contractInfo.abi;
+        result.isProxy = contractInfo.isProxy;
+        result.implementation = contractInfo.implementation;
+      }
+      
+      // Apply custom name if provided (overrides everything)
+      if (customName) {
+        result.customName = customName;
+      }
+      
+      // Save to cache
+      setContractCache(chainId, normalizedAddress, result);
+      
+      // Build success message
+      const found = [];
+      if (result.customName) found.push('Custom Name');
+      if (result.symbol) found.push('Symbol');
+      if (result.name) found.push('Name');
+      if (result.abi) found.push('ABI');
+      
+      if (found.length > 0) {
+        updateDialogStatus(statusEl, `✓ Saved: ${found.join(', ')}`, 'success');
+        showToast(`Contract added: ${normalizedAddress.slice(0, 10)}...`, 'success');
+      } else {
+        updateDialogStatus(statusEl, '⚠ Address saved but no contract info found', 'success');
+      }
     }
     
     // Refresh list
@@ -637,10 +701,10 @@ function updateDialogStatus(statusEl, message, type) {
 }
 
 /**
- * Fetch token symbol and decimals using Multicall3.
+ * Fetch token symbol using Multicall3.
  * @param {string} address - Contract address
  * @param {string} chainId - Chain ID
- * @returns {Promise<{symbol: string|null, decimals: number|null}|null>}
+ * @returns {Promise<{symbol: string|null}|null>}
  */
 async function fetchTokenInfo(address, chainId) {
   const rpcUrl = getRpcUrl(chainId);
@@ -651,18 +715,16 @@ async function fetchTokenInfo(address, chainId) {
     'function tryAggregate(bool requireSuccess, tuple(address target, bytes callData)[] calls) returns (tuple(bool success, bytes returnData)[])'
   ];
   const ERC20_ABI = [
-    'function symbol() view returns (string)',
-    'function decimals() view returns (uint8)'
+    'function symbol() view returns (string)'
   ];
   
   try {
     const iface = new ethers.utils.Interface(MULTICALL3_ABI);
     const erc20Interface = new ethers.utils.Interface(ERC20_ABI);
     
-    // Build calls for symbol and decimals
+    // Build call for symbol only
     const calls = [
-      { target: address, callData: '0x95d89b41' }, // symbol()
-      { target: address, callData: '0x313ce567' }  // decimals()
+      { target: address, callData: '0x95d89b41' } // symbol()
     ];
     
     const calldata = iface.encodeFunctionData('tryAggregate', [false, calls]);
@@ -687,7 +749,6 @@ async function fetchTokenInfo(address, chainId) {
     const results = decoded[0];
     
     let symbol = null;
-    let decimals = null;
     
     // Decode symbol
     if (results[0]?.success && results[0]?.returnData !== '0x') {
@@ -697,15 +758,7 @@ async function fetchTokenInfo(address, chainId) {
       } catch (e) {}
     }
     
-    // Decode decimals
-    if (results[1]?.success && results[1]?.returnData !== '0x') {
-      try {
-        const decimalsDecoded = erc20Interface.decodeFunctionResult('decimals', results[1].returnData);
-        decimals = decimalsDecoded[0];
-      } catch (e) {}
-    }
-    
-    return { symbol, decimals };
+    return { symbol };
   } catch (err) {
     console.error('[Token Info] Error:', err);
     return null;

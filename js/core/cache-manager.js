@@ -7,13 +7,20 @@
  * Cache Structure:
  * - All keys prefixed with 'payload-parser-'
  * - Contract info: 'payload-parser-contract:{chainId}:{address}'
- *   - Stores: symbol, decimals, name, abi, isProxy, implementation, vnetDefault
+ *   - Stores: symbol, name, abi, isProxy, implementation, vnetDefault, customName
+ * 
+ * Special ChainId 0:
+ * - ChainId 0 is a special "global" chain ID
+ * - Addresses with chainId 0 apply to ALL chains
+ * - Custom names defined with chainId 0 override all chain-specific names
+ * - Only the cache manager UI can write to chainId 0
  * 
  * Features:
  * - Unified storage format for all address-related data
  * - No expiration for successfully fetched data
  * - Export/Import functionality
  * - Per-entry and bulk operations
+ * - Global address definitions via chainId 0
  */
 
 import { log } from './abi-utils.js';
@@ -34,14 +41,21 @@ const CONTRACT_PREFIX = `${CACHE_PREFIX}contract:`;
  * Contract cache entry structure.
  * @typedef {Object} ContractCacheEntry
  * @property {string|null} symbol - Token symbol (from RPC multicall)
- * @property {number|null} decimals - Token decimals (from RPC multicall)
  * @property {string|null} name - Verified contract name (from Etherscan)
+ * @property {string|null} customName - User-defined custom name (highest priority)
  * @property {Object[]|null} abi - Contract ABI (from Etherscan)
  * @property {boolean} isProxy - Whether contract is a proxy
  * @property {string|null} implementation - Implementation address if proxy
  * @property {boolean} vnetDefault - Whether to show in VNet dropdown by default
  * @property {number} updatedAt - Last update timestamp
  */
+
+/**
+ * Global chain ID constant.
+ * Addresses with this chainId apply to all chains.
+ * @type {string}
+ */
+export const GLOBAL_CHAIN_ID = '0';
 
 /**
  * Generate cache key for a contract entry.
@@ -87,6 +101,111 @@ export function getContractCache(chainId, address) {
   } catch (e) {
     log('debug', 'cache-manager', 'Failed to read from cache', { error: e.message });
     return null;
+  }
+}
+
+/**
+ * Get the display name for an address with priority lookup.
+ * Priority order:
+ * 1. customName from chainId 0 (global)
+ * 2. customName from specific chainId
+ * 3. symbol from specific chainId cache
+ * 4. name from chainId 0 (global)
+ * 5. name from specific chainId cache
+ * 
+ * @param {string|number} chainId - The specific chain ID
+ * @param {string} address - The contract address
+ * @returns {{displayName: string|null, source: string|null}} Display name and its source
+ */
+export function getAddressDisplayName(chainId, address) {
+  try {
+    const normalizedAddress = address.toLowerCase();
+    const chainIdStr = String(chainId);
+    
+    // 1. Check global (chainId 0) customName
+    const globalCache = getContractCache(GLOBAL_CHAIN_ID, normalizedAddress);
+    if (globalCache?.customName) {
+      return { displayName: globalCache.customName, source: 'global-custom' };
+    }
+    
+    // 2. Check specific chainId customName
+    const chainCache = getContractCache(chainIdStr, normalizedAddress);
+    if (chainCache?.customName) {
+      return { displayName: chainCache.customName, source: 'chain-custom' };
+    }
+    
+    // 3. Check specific chainId symbol
+    if (chainCache?.symbol) {
+      return { displayName: chainCache.symbol, source: 'chain-symbol' };
+    }
+    
+    // 4. Check global (chainId 0) name
+    if (globalCache?.name) {
+      return { displayName: globalCache.name, source: 'global-name' };
+    }
+    
+    // 5. Check specific chainId name
+    if (chainCache?.name) {
+      return { displayName: chainCache.name, source: 'chain-name' };
+    }
+    
+    return { displayName: null, source: null };
+  } catch (e) {
+    log('debug', 'cache-manager', 'Failed to get display name', { error: e.message });
+    return { displayName: null, source: null };
+  }
+}
+
+/**
+ * Get cached symbol for an address.
+ * Only checks the specific chainId (not global chainId 0).
+ * 
+ * @param {string|number} chainId - The chain ID
+ * @param {string} address - The contract address
+ * @returns {string|null} The symbol or null
+ */
+export function getCachedSymbol(chainId, address) {
+  try {
+    const cached = getContractCache(chainId, address);
+    return cached?.symbol || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Get cached name for an address with fallback to global.
+ * Checks chainId 0 first, then specific chainId.
+ * 
+ * @param {string|number} chainId - The specific chain ID
+ * @param {string} address - The contract address
+ * @returns {{name: string|null, source: 'global'|'chain'|null}} The name and its source
+ */
+export function getCachedName(chainId, address) {
+  try {
+    const normalizedAddress = address.toLowerCase();
+    
+    // Check global first
+    const globalCache = getContractCache(GLOBAL_CHAIN_ID, normalizedAddress);
+    if (globalCache?.customName) {
+      return { name: globalCache.customName, source: 'global' };
+    }
+    if (globalCache?.name) {
+      return { name: globalCache.name, source: 'global' };
+    }
+    
+    // Then check specific chain
+    const chainCache = getContractCache(chainId, normalizedAddress);
+    if (chainCache?.customName) {
+      return { name: chainCache.customName, source: 'chain' };
+    }
+    if (chainCache?.name) {
+      return { name: chainCache.name, source: 'chain' };
+    }
+    
+    return { name: null, source: null };
+  } catch (e) {
+    return { name: null, source: null };
   }
 }
 

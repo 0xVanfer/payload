@@ -8,15 +8,25 @@
  * - Found names: permanent cache (no expiration)
  * - Not found: handled at lookup time (not cached)
  * 
+ * Priority lookup order:
+ * 1. Global cache (chainId 0) - customName/name
+ * 2. Chain-specific cache - customName/name
+ * 3. Etherscan API fetch
+ * 
  * Features:
  * - Etherscan V2 API for contract name lookup
  * - Unified cache manager integration
- * - Cache key: chainId + address
+ * - Support for global (chainId 0) names
  */
 
 import { log } from './abi-utils.js';
 import { getNextApiKey, getApiUrl, isRoutescanChain } from '../config/etherscan-api.js';
-import { getContractCache, setContractCache } from './cache-manager.js';
+import { 
+  getContractCache, 
+  setContractCache, 
+  getCachedName,
+  GLOBAL_CHAIN_ID 
+} from './cache-manager.js';
 
 /**
  * In-memory cache for "not found" entries to avoid repeated API calls.
@@ -31,25 +41,33 @@ const notFoundCache = new Map();
 const NOT_FOUND_EXPIRY_MS = 60 * 60 * 1000;
 
 /**
- * Get contract name from unified cache.
+ * Get contract name from unified cache with priority lookup.
+ * Priority: global (chainId 0) -> specific chainId
  * @param {string|number} chainId - The chain ID
  * @param {string} address - The contract address
- * @returns {{name: string}|null} Cache entry or null if not cached
+ * @returns {{name: string|null, source: string|null}|null} Cache entry or null if not cached
  */
 function getFromCache(chainId, address) {
+  const normalizedAddress = address.toLowerCase();
+  
   // Check in-memory "not found" cache
-  const notFoundKey = `${chainId}:${address.toLowerCase()}`;
+  const notFoundKey = `${chainId}:${normalizedAddress}`;
   const notFoundExpiry = notFoundCache.get(notFoundKey);
   if (notFoundExpiry && Date.now() < notFoundExpiry) {
     log('debug', 'contract-name', 'Not found (in-memory cache)', { chainId, address });
-    return { name: null };
+    return { name: null, source: 'not-found-cache' };
   }
   
-  // Check unified cache
-  const cached = getContractCache(chainId, address);
-  if (cached && cached.name) {
-    log('debug', 'contract-name', 'Found in cache', { chainId, address, name: cached.name });
-    return { name: cached.name };
+  // Use unified cache lookup (checks global first, then chain-specific)
+  const cached = getCachedName(chainId, normalizedAddress);
+  if (cached.name) {
+    log('debug', 'contract-name', 'Found in cache', { 
+      chainId, 
+      address, 
+      name: cached.name, 
+      source: cached.source 
+    });
+    return cached;
   }
   
   return null;

@@ -2,15 +2,14 @@
  * Contract Info Service Module
  * 
  * Provides contract metadata lookup functionality using Multicall3.
- * Batch queries multiple addresses for symbol, decimals, and other
- * ERC20/token-related information in a single RPC call.
+ * Batch queries multiple addresses for symbol information in a single RPC call.
  * 
  * Features:
  * - Multicall3 batch queries for efficiency
- * - Supports symbol() and decimals() lookups
+ * - Supports symbol() lookup only (decimals removed)
  * - Graceful error handling for non-contract addresses
- * - Extensible for additional contract calls
  * - Uses unified cache manager for persistence
+ * - Priority lookup: symbol -> global name -> chain name
  * 
  * Note: Multicall3 is deployed at the same address on most EVM chains:
  * 0xcA11bde05977b3631167028862bE2a173976CA11
@@ -18,26 +17,30 @@
 
 import { log } from './abi-utils.js';
 import { getRpcUrl } from '../config/chains.js';
-import { getContractCache, setContractCache } from './cache-manager.js';
+import { 
+  getContractCache, 
+  setContractCache, 
+  getAddressDisplayName,
+  getCachedSymbol 
+} from './cache-manager.js';
 
 /**
  * Get contract info from unified cache.
- * If symbol or name exists in cache, consider it a valid cache hit.
+ * Only checks for symbol in cache (decimals removed).
  * @param {string|number} chainId - The chain ID
  * @param {string} address - The contract address
- * @returns {{symbol: string|null, decimals: number|null, isContract: boolean}|null}
+ * @returns {{symbol: string|null, isContract: boolean}|null}
  */
 function getFromCache(chainId, address) {
   const cached = getContractCache(chainId, address);
-  // Consider cache hit if we have symbol OR name (no need to re-fetch via RPC)
-  if (!cached || (!cached.symbol && !cached.name && cached.decimals == null)) {
+  // Consider cache hit if we have symbol (no need to re-fetch via RPC)
+  if (!cached || !cached.symbol) {
     return null;
   }
-  log('debug', 'contract-info', 'Found in cache', { chainId, address, symbol: cached.symbol, name: cached.name });
+  log('debug', 'contract-info', 'Found in cache', { chainId, address, symbol: cached.symbol });
   return {
-    symbol: cached.symbol || null,
-    decimals: cached.decimals ?? null,
-    isContract: !!(cached.symbol || cached.name || cached.decimals != null)
+    symbol: cached.symbol,
+    isContract: true
   };
 }
 
@@ -52,8 +55,7 @@ function saveToCache(chainId, address, info) {
   if (!info.symbol) return;
   
   setContractCache(chainId, address, {
-    symbol: info.symbol,
-    decimals: info.decimals
+    symbol: info.symbol
   });
   log('debug', 'contract-info', 'Saved to cache', { chainId, address, symbol: info.symbol });
 }
@@ -69,9 +71,7 @@ const MULTICALL3_ADDRESS = '0xcA11bde05977b3631167028862bE2a173976CA11';
  * @type {Object}
  */
 const ERC20_SIGNATURES = {
-  symbol: '0x95d89b41',    // symbol()
-  decimals: '0x313ce567',  // decimals()
-  name: '0x06fdde03'       // name() - for future use
+  symbol: '0x95d89b41'    // symbol()
 };
 
 /**
@@ -88,9 +88,7 @@ const MULTICALL3_ABI = [
  * @type {string[]}
  */
 const ERC20_ABI = [
-  'function symbol() view returns (string)',
-  'function decimals() view returns (uint8)',
-  'function name() view returns (string)'
+  'function symbol() view returns (string)'
 ];
 
 /**
@@ -98,12 +96,11 @@ const ERC20_ABI = [
  * @typedef {Object} ContractInfo
  * @property {string} address - The contract address
  * @property {string|null} symbol - Token symbol or null if not available
- * @property {number|null} decimals - Token decimals or null if not available
  * @property {boolean} isContract - Whether the address is a contract with token interface
  */
 
 /**
- * Fetch contract information (symbol, decimals) for multiple addresses.
+ * Fetch contract symbols for multiple addresses.
  * Uses Multicall3 to batch all queries into a single RPC call.
  * First checks browser cache for each address, only queries uncached ones.
  * 
@@ -128,7 +125,6 @@ async function fetchContractInfo(addresses, chainId) {
       infoMap.set(address, {
         address,
         symbol: cached.symbol,
-        decimals: cached.decimals,
         isContract: cached.isContract
       });
     } else {
@@ -154,13 +150,13 @@ async function fetchContractInfo(addresses, chainId) {
     return infoMap;
   }
 
-  log('info', 'contract-info', 'Fetching contract info via RPC', { 
+  log('info', 'contract-info', 'Fetching contract symbols via RPC', { 
     addressCount: uncachedAddresses.length, 
     chainId 
   });
 
   try {
-    // Build multicall batch with symbol and decimals for each address
+    // Build multicall batch with symbol for each address
     const calls = buildMulticallBatch(uncachedAddresses);
     
     // Execute multicall
@@ -202,7 +198,6 @@ function getContractInfoFromCache(addresses, chainId) {
       cachedMap.set(address, {
         address,
         symbol: cached.symbol,
-        decimals: cached.decimals,
         isContract: cached.isContract
       });
     } else {
@@ -221,7 +216,7 @@ function getContractInfoFromCache(addresses, chainId) {
 }
 
 /**
- * Fetch contract info for addresses via RPC (no cache check).
+ * Fetch contract symbols for addresses via RPC (no cache check).
  * 
  * @param {string[]} addresses - Array of addresses to query
  * @param {string|number} chainId - The chain ID
@@ -238,7 +233,7 @@ async function fetchContractInfoFromRpc(addresses, chainId) {
     return new Map();
   }
   
-  log('info', 'contract-info', 'Fetching contract info via RPC', { 
+  log('info', 'contract-info', 'Fetching contract symbols via RPC', { 
     addressCount: addresses.length, 
     chainId 
   });
@@ -255,14 +250,14 @@ async function fetchContractInfoFromRpc(addresses, chainId) {
     
     return fetchedInfoMap;
   } catch (e) {
-    log('error', 'contract-info', 'Failed to fetch contract info via RPC', { error: e.message });
+    log('error', 'contract-info', 'Failed to fetch contract symbols via RPC', { error: e.message });
     return new Map();
   }
 }
 
 /**
- * Build multicall batch for symbol and decimals queries.
- * Creates 2 calls per address: symbol() and decimals().
+ * Build multicall batch for symbol queries only.
+ * Creates 1 call per address: symbol().
  * 
  * @param {string[]} addresses - Array of addresses
  * @returns {Array<{target: string, callData: string}>} Array of call objects
@@ -271,16 +266,10 @@ function buildMulticallBatch(addresses) {
   const calls = [];
   
   for (const address of addresses) {
-    // Add symbol() call
+    // Add symbol() call only
     calls.push({
       target: address,
       callData: ERC20_SIGNATURES.symbol
-    });
-    
-    // Add decimals() call
-    calls.push({
-      target: address,
-      callData: ERC20_SIGNATURES.decimals
     });
   }
   
@@ -346,7 +335,7 @@ async function executeMulticall(rpcUrl, calls) {
 
 /**
  * Parse multicall results into ContractInfo objects.
- * Handles decoding of symbol and decimals return data.
+ * Handles decoding of symbol return data only.
  * 
  * @param {string[]} addresses - Original addresses array
  * @param {Array<{success: boolean, returnData: string}>} results - Multicall results
@@ -358,16 +347,11 @@ function parseMulticallResults(addresses, results) {
   
   for (let i = 0; i < addresses.length; i++) {
     const address = addresses[i];
-    const symbolIndex = i * 2;       // symbol result index
-    const decimalsIndex = i * 2 + 1; // decimals result index
-    
-    const symbolResult = results[symbolIndex];
-    const decimalsResult = results[decimalsIndex];
+    const symbolResult = results[i]; // 1:1 mapping now
     
     const info = {
       address,
       symbol: null,
-      decimals: null,
       isContract: false
     };
     
@@ -383,21 +367,10 @@ function parseMulticallResults(addresses, results) {
       }
     }
     
-    // Try to decode decimals
-    if (decimalsResult && decimalsResult.success && decimalsResult.returnData !== '0x') {
-      try {
-        const decoded = erc20Interface.decodeFunctionResult('decimals', decimalsResult.returnData);
-        info.decimals = decoded[0];
-        info.isContract = true;
-      } catch (e) {
-        log('debug', 'contract-info', 'Failed to decode decimals', { address, error: e.message });
-      }
-    }
-    
     infoMap.set(address, info);
   }
   
-  log('info', 'contract-info', 'Parsed contract info', { 
+  log('info', 'contract-info', 'Parsed contract symbols', { 
     total: addresses.length,
     withSymbol: Array.from(infoMap.values()).filter(i => i.symbol).length
   });
