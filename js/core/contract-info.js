@@ -10,6 +10,7 @@
  * - Supports symbol() and decimals() lookups
  * - Graceful error handling for non-contract addresses
  * - Extensible for additional contract calls
+ * - Uses unified cache manager for persistence
  * 
  * Note: Multicall3 is deployed at the same address on most EVM chains:
  * 0xcA11bde05977b3631167028862bE2a173976CA11
@@ -17,6 +18,45 @@
 
 import { log } from './abi-utils.js';
 import { getRpcUrl } from '../config/chains.js';
+import { getContractCache, setContractCache } from './cache-manager.js';
+
+/**
+ * Get contract info from unified cache.
+ * If symbol or name exists in cache, consider it a valid cache hit.
+ * @param {string|number} chainId - The chain ID
+ * @param {string} address - The contract address
+ * @returns {{symbol: string|null, decimals: number|null, isContract: boolean}|null}
+ */
+function getFromCache(chainId, address) {
+  const cached = getContractCache(chainId, address);
+  // Consider cache hit if we have symbol OR name (no need to re-fetch via RPC)
+  if (!cached || (!cached.symbol && !cached.name && cached.decimals == null)) {
+    return null;
+  }
+  log('debug', 'contract-info', 'Found in cache', { chainId, address, symbol: cached.symbol, name: cached.name });
+  return {
+    symbol: cached.symbol || null,
+    decimals: cached.decimals ?? null,
+    isContract: !!(cached.symbol || cached.name || cached.decimals != null)
+  };
+}
+
+/**
+ * Save contract info to unified cache.
+ * @param {string|number} chainId - The chain ID
+ * @param {string} address - The contract address
+ * @param {Object} info - The contract info
+ */
+function saveToCache(chainId, address, info) {
+  // Only cache if symbol was found
+  if (!info.symbol) return;
+  
+  setContractCache(chainId, address, {
+    symbol: info.symbol,
+    decimals: info.decimals
+  });
+  log('debug', 'contract-info', 'Saved to cache', { chainId, address, symbol: info.symbol });
+}
 
 /**
  * Multicall3 contract address (same on most EVM chains).
@@ -65,6 +105,7 @@ const ERC20_ABI = [
 /**
  * Fetch contract information (symbol, decimals) for multiple addresses.
  * Uses Multicall3 to batch all queries into a single RPC call.
+ * First checks browser cache for each address, only queries uncached ones.
  * 
  * @param {string[]} addresses - Array of addresses to query
  * @param {string|number} chainId - The chain ID to query
@@ -76,29 +117,145 @@ async function fetchContractInfo(addresses, chainId) {
     return new Map();
   }
 
+  const infoMap = new Map();
+  const uncachedAddresses = [];
+  
+  // Check cache first for each address
+  for (const address of addresses) {
+    const cached = getFromCache(chainId, address);
+    if (cached) {
+      // Reconstruct full ContractInfo from cache
+      infoMap.set(address, {
+        address,
+        symbol: cached.symbol,
+        decimals: cached.decimals,
+        isContract: cached.isContract
+      });
+    } else {
+      uncachedAddresses.push(address);
+    }
+  }
+  
+  log('info', 'contract-info', 'Cache lookup complete', {
+    total: addresses.length,
+    cached: addresses.length - uncachedAddresses.length,
+    uncached: uncachedAddresses.length,
+    chainId
+  });
+  
+  // If all addresses are cached, return early
+  if (uncachedAddresses.length === 0) {
+    return infoMap;
+  }
+
   const rpcUrl = getRpcUrl(chainId);
   if (!rpcUrl) {
     log('warn', 'contract-info', 'No RPC URL configured for chain', { chainId });
-    return new Map();
+    return infoMap;
   }
 
-  log('info', 'contract-info', 'Fetching contract info', { 
-    addressCount: addresses.length, 
+  log('info', 'contract-info', 'Fetching contract info via RPC', { 
+    addressCount: uncachedAddresses.length, 
     chainId 
   });
 
   try {
     // Build multicall batch with symbol and decimals for each address
-    const calls = buildMulticallBatch(addresses);
+    const calls = buildMulticallBatch(uncachedAddresses);
     
     // Execute multicall
     const results = await executeMulticall(rpcUrl, calls);
     
     // Parse results and build ContractInfo map
-    return parseMulticallResults(addresses, results);
+    const fetchedInfoMap = parseMulticallResults(uncachedAddresses, results);
+    
+    // Merge fetched results and save to cache
+    for (const [address, info] of fetchedInfoMap) {
+      infoMap.set(address, info);
+      // Save to cache if symbol was found
+      saveToCache(chainId, address, info);
+    }
+    
+    return infoMap;
     
   } catch (e) {
     log('error', 'contract-info', 'Failed to fetch contract info', { error: e.message });
+    return infoMap;
+  }
+}
+
+/**
+ * Get contract info from cache only (synchronous).
+ * Returns cached info and list of uncached addresses.
+ * 
+ * @param {string[]} addresses - Array of addresses to query
+ * @param {string|number} chainId - The chain ID
+ * @returns {{cachedMap: Map<string, ContractInfo>, uncachedAddresses: string[]}}
+ */
+function getContractInfoFromCache(addresses, chainId) {
+  const cachedMap = new Map();
+  const uncachedAddresses = [];
+  
+  for (const address of addresses) {
+    const cached = getFromCache(chainId, address);
+    if (cached) {
+      cachedMap.set(address, {
+        address,
+        symbol: cached.symbol,
+        decimals: cached.decimals,
+        isContract: cached.isContract
+      });
+    } else {
+      uncachedAddresses.push(address);
+    }
+  }
+  
+  log('info', 'contract-info', 'Cache-only lookup', {
+    total: addresses.length,
+    cached: cachedMap.size,
+    uncached: uncachedAddresses.length,
+    chainId
+  });
+  
+  return { cachedMap, uncachedAddresses };
+}
+
+/**
+ * Fetch contract info for addresses via RPC (no cache check).
+ * 
+ * @param {string[]} addresses - Array of addresses to query
+ * @param {string|number} chainId - The chain ID
+ * @returns {Promise<Map<string, ContractInfo>>} Map of address -> ContractInfo
+ */
+async function fetchContractInfoFromRpc(addresses, chainId) {
+  if (!addresses || addresses.length === 0) {
+    return new Map();
+  }
+  
+  const rpcUrl = getRpcUrl(chainId);
+  if (!rpcUrl) {
+    log('warn', 'contract-info', 'No RPC URL configured for chain', { chainId });
+    return new Map();
+  }
+  
+  log('info', 'contract-info', 'Fetching contract info via RPC', { 
+    addressCount: addresses.length, 
+    chainId 
+  });
+  
+  try {
+    const calls = buildMulticallBatch(addresses);
+    const results = await executeMulticall(rpcUrl, calls);
+    const fetchedInfoMap = parseMulticallResults(addresses, results);
+    
+    // Save to cache
+    for (const [address, info] of fetchedInfoMap) {
+      saveToCache(chainId, address, info);
+    }
+    
+    return fetchedInfoMap;
+  } catch (e) {
+    log('error', 'contract-info', 'Failed to fetch contract info via RPC', { error: e.message });
     return new Map();
   }
 }
@@ -316,6 +473,8 @@ function updateAddressDisplays(contractInfoMap, getElementIds) {
 export {
   MULTICALL3_ADDRESS,
   fetchContractInfo,
+  getContractInfoFromCache,
+  fetchContractInfoFromRpc,
   updateAddressDisplays,
   buildMulticallBatch,
   parseMulticallResults

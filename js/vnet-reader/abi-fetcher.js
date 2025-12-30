@@ -3,20 +3,87 @@
  * 
  * Fetches contract ABI from Etherscan API and parses it into method definitions.
  * Used to populate available methods for a selected contract address.
+ * Uses unified cache manager for ABI persistence (permanent, no expiration).
  */
 
 import { state } from './state.js';
 import { getNextApiKey, getApiUrl, isRoutescanChain } from '../config/etherscan-api.js';
+import { getContractCache, setContractCache } from '../core/cache-manager.js';
+
+/**
+ * Get contract ABI from unified cache.
+ * @param {string|number} chainId - The chain ID
+ * @param {string} address - The contract address
+ * @returns {{abi: Object[], isProxy: boolean, implementation: string|null}|null} Cache entry or null
+ */
+function getAbiFromCache(chainId, address) {
+  const cached = getContractCache(chainId, address);
+  if (!cached || !cached.abi) return null;
+  
+  console.log('[ABI Fetcher] Found ABI in cache', { chainId, address, methodCount: cached.abi?.length || 0 });
+  return {
+    abi: cached.abi,
+    isProxy: cached.isProxy || false,
+    implementation: cached.implementation || null
+  };
+}
+
+/**
+ * Save contract ABI to unified cache.
+ * @param {string|number} chainId - The chain ID
+ * @param {string} address - The contract address
+ * @param {Object[]} abi - The contract ABI
+ * @param {boolean} isProxy - Whether the contract is a proxy
+ * @param {string|null} implementation - The implementation address if proxy
+ */
+function saveAbiToCache(chainId, address, abi, isProxy, implementation) {
+  if (!abi) return;
+  
+  setContractCache(chainId, address, {
+    abi,
+    isProxy,
+    implementation
+  });
+  console.log('[ABI Fetcher] Saved ABI to cache', { chainId, address, methodCount: abi.length });
+}
+
+/**
+ * Filter ABI to remove error entries.
+ * Only keep functions, events, constructors, fallback, and receive.
+ * @param {Object[]} abi - The raw ABI array
+ * @returns {Object[]|null} Filtered ABI or null if empty
+ */
+function filterAbi(abi) {
+  if (!Array.isArray(abi)) return null;
+  
+  // Filter to keep only useful entries (exclude error types)
+  const filtered = abi.filter(item => {
+    const type = item.type;
+    return type === 'function' || type === 'event' || type === 'constructor' || 
+           type === 'fallback' || type === 'receive';
+  });
+  
+  // Return null if no useful entries remain
+  return filtered.length > 0 ? filtered : null;
+}
 
 /**
  * Fetch contract ABI from Etherscan API.
  * Supports proxy contracts by detecting implementation address.
+ * First checks browser cache before making API calls.
  * @param {string} address - The contract address
  * @param {string} chainId - The chain ID
  * @returns {Promise<{abi: Object[]|null, isProxy: boolean, implementation: string|null}>}
  */
 export async function fetchContractABI(address, chainId) {
   const normalizedChainId = String(chainId);
+  
+  // Check cache first
+  const cached = getAbiFromCache(normalizedChainId, address);
+  if (cached) {
+    return cached;
+  }
+  
   const apiUrl = getApiUrl(normalizedChainId);
   const isRoutescan = isRoutescanChain(normalizedChainId);
   const apiKey = getNextApiKey();
@@ -50,6 +117,8 @@ export async function fetchContractABI(address, chainId) {
         // Fetch the implementation contract's ABI
         const implAbi = await fetchImplementationABI(implAddress, normalizedChainId, apiUrl, isRoutescan);
         if (implAbi) {
+          // Save to cache before returning
+          saveAbiToCache(normalizedChainId, address, implAbi, true, implAddress);
           return { abi: implAbi, isProxy: true, implementation: implAddress };
         }
       }
@@ -57,12 +126,17 @@ export async function fetchContractABI(address, chainId) {
       // Not a proxy, or implementation ABI not found - use the contract's own ABI
       if (contractInfo.ABI && contractInfo.ABI !== 'Contract source code not verified') {
         try {
-          const abi = JSON.parse(contractInfo.ABI);
-          console.log('[ABI Fetcher] Successfully fetched ABI', { 
-            address, 
-            methodCount: abi.filter(i => i.type === 'function').length 
-          });
-          return { abi, isProxy: false, implementation: null };
+          const rawAbi = JSON.parse(contractInfo.ABI);
+          const abi = filterAbi(rawAbi);
+          if (abi) {
+            console.log('[ABI Fetcher] Successfully fetched ABI', { 
+              address, 
+              methodCount: abi.filter(i => i.type === 'function').length 
+            });
+            // Save to cache before returning
+            saveAbiToCache(normalizedChainId, address, abi, false, null);
+            return { abi, isProxy: false, implementation: null };
+          }
         } catch (e) {
           console.error('[ABI Fetcher] Failed to parse ABI', { error: e.message });
         }
@@ -104,7 +178,12 @@ async function fetchImplementationABI(address, chainId, apiUrl, isRoutescan) {
       return null;
     }
     
-    const abi = typeof data.result === 'string' ? JSON.parse(data.result) : data.result;
+    const rawAbi = typeof data.result === 'string' ? JSON.parse(data.result) : data.result;
+    const abi = filterAbi(rawAbi);
+    if (!abi) {
+      console.log('[ABI Fetcher] Implementation ABI empty after filtering', { address });
+      return null;
+    }
     console.log('[ABI Fetcher] Fetched implementation ABI', { 
       address, 
       methodCount: abi.filter(i => i.type === 'function').length 

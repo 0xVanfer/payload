@@ -11,10 +11,12 @@ import { loadContractABI, hasContractABI } from './abi-fetcher.js';
 import { addContractABICategory } from './method.js';
 import { getFromCache, saveToCache } from '../core/contract-name.js';
 import { getNextApiKey, getApiUrl, isRoutescanChain } from '../config/etherscan-api.js';
+import { getVnetDefaultAddresses } from '../core/cache-manager.js';
 
 /**
  * Initialize the address selector with discovered addresses.
  * Fetches symbols for all addresses first to enable proper sorting.
+ * Also includes addresses marked as VNet defaults from cache.
  * @returns {Promise<void>}
  */
 export async function initAddressSelector() {
@@ -27,11 +29,30 @@ export async function initAddressSelector() {
   // Clear existing options
   select.innerHTML = '<option value="">-- Select --</option>';
   
+  // Get VNet default addresses from cache for the current chain
+  const vnetDefaults = getVnetDefaultAddresses(state.chainId);
+  const vnetDefaultAddressSet = new Set(vnetDefaults.map(v => v.address.toLowerCase()));
+  
+  // Combine discovered addresses with VNet defaults (avoid duplicates)
+  const allAddresses = [...state.addresses];
+  for (const vnetAddr of vnetDefaults) {
+    if (!allAddresses.some(a => a.toLowerCase() === vnetAddr.address.toLowerCase())) {
+      allAddresses.push(vnetAddr.address);
+      // Pre-populate symbol/name info from cache
+      if (vnetAddr.symbol) {
+        state.addressSymbols[vnetAddr.address.toLowerCase()] = vnetAddr.symbol;
+      }
+      if (vnetAddr.name) {
+        state.addressContractNames[vnetAddr.address.toLowerCase()] = vnetAddr.name;
+      }
+    }
+  }
+  
   // Fetch symbols for all discovered addresses first
-  if (state.addresses.length > 0 && state.provider) {
-    await fetchAllAddressSymbols(state.addresses);
+  if (allAddresses.length > 0 && state.provider) {
+    await fetchAllAddressSymbols(allAddresses);
     // Fetch contract names for addresses without symbols
-    await fetchAllContractNames(state.addresses);
+    await fetchAllContractNames(allAddresses);
   }
   
   // Add discovered addresses, sorted by symbol presence
@@ -46,6 +67,25 @@ export async function initAddressSelector() {
       const option = document.createElement('option');
       option.value = addr;
       option.textContent = formatAddressOption(addr);
+      optgroup.appendChild(option);
+    }
+    
+    select.appendChild(optgroup);
+  }
+  
+  // Add VNet default addresses that weren't in discovered addresses
+  const additionalVnetAddresses = vnetDefaults.filter(
+    v => !state.addresses.some(a => a.toLowerCase() === v.address.toLowerCase())
+  );
+  
+  if (additionalVnetAddresses.length > 0) {
+    const optgroup = document.createElement('optgroup');
+    optgroup.label = 'Saved Addresses';
+    
+    for (const vnetAddr of additionalVnetAddresses) {
+      const option = document.createElement('option');
+      option.value = vnetAddr.address;
+      option.textContent = formatAddressOption(vnetAddr.address);
       optgroup.appendChild(option);
     }
     

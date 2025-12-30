@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cache Manager - Payload Parser</title>
+  
+  <!-- External Dependencies -->
+  <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js"></script>
+  
+  <!-- Styles -->
+  <link rel="stylesheet" href="css/styles.css?v=1.0.5">
+  <link rel="stylesheet" href="css/cache-manager.css?v=1.0.3">
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-content">
+        <h1>Cache Manager</h1>
+        <a href="index.html" class="back-link">← Back to Parser</a>
+      </div>
+    </header>
+    
+    <!-- Tab Navigation -->
+    <nav class="tab-nav">
+      <button class="tab-btn active" data-tab="contracts">
+        📋 Contract Info
+      </button>
+      <!-- Future tabs can be added here -->
+      <!-- <button class="tab-btn" data-tab="chains">🔗 Chain Config</button> -->
+    </nav>
+    
+    <!-- Tab Content -->
+    <main class="tab-content">
+      <!-- Contracts Tab -->
+      <section id="tab-contracts" class="tab-panel active">
+        <!-- Toolbar -->
+        <div class="toolbar">
+          <div class="toolbar-left">
+            <span class="stats-label">
+              <span id="total-count">0</span> entries
+            </span>
+          </div>
+          <div class="toolbar-right">
+            <button id="add-address-btn" class="btn btn-primary btn-small">
+              ➕ Add
+            </button>
+            <button id="export-btn" class="btn btn-secondary btn-small">
+              📤 Export
+            </button>
+            <button id="import-btn" class="btn btn-secondary btn-small">
+              📥 Import
+            </button>
+            <button id="clear-all-btn" class="btn btn-danger btn-small">
+              🗑️ Clear All
+            </button>
+          </div>
+        </div>
+        
+        <!-- Hidden file input for import -->
+        <input type="file" id="import-file" accept=".json" style="display: none;">
+        
+        <!-- Contract List -->
+        <div id="contract-list" class="contract-list">
+          <p class="empty-message">No cached contracts. Parse some transactions to populate the cache.</p>
+        </div>
+      </section>
+      
+      <!-- Future tab panels can be added here -->
+    </main>
+    
+    <!-- Status Messages -->
+    <div id="status-toast" class="status-toast hidden"></div>
+  </div>
+  
+  <!-- Application Script -->
+  <script type="module" src="js/cache-manager-app.js?v=1.0.3"></script>
+</body>
+</html>

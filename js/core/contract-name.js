@@ -4,24 +4,25 @@
  * Provides contract name lookup functionality for addresses without symbols.
  * Uses Etherscan API getsourcecode to fetch verified contract names.
  * 
- * Uses browser cache with different expiration strategies:
+ * Uses unified cache manager:
  * - Found names: permanent cache (no expiration)
- * - Not found: 1 hour expiration (retry after 1 hour)
+ * - Not found: handled at lookup time (not cached)
  * 
  * Features:
  * - Etherscan V2 API for contract name lookup
- * - Browser localStorage caching
+ * - Unified cache manager integration
  * - Cache key: chainId + address
  */
 
 import { log } from './abi-utils.js';
 import { getNextApiKey, getApiUrl, isRoutescanChain } from '../config/etherscan-api.js';
+import { getContractCache, setContractCache } from './cache-manager.js';
 
 /**
- * Cache key prefix for contract names.
- * @type {string}
+ * In-memory cache for "not found" entries to avoid repeated API calls.
+ * @type {Map<string, number>}
  */
-const CACHE_PREFIX = 'contract-name:';
+const notFoundCache = new Map();
 
 /**
  * Cache expiration time for not found entries (1 hour in milliseconds).
@@ -30,77 +31,46 @@ const CACHE_PREFIX = 'contract-name:';
 const NOT_FOUND_EXPIRY_MS = 60 * 60 * 1000;
 
 /**
- * Cache entry structure.
- * @typedef {Object} CacheEntry
- * @property {string|null} name - The contract name or null if not found
- * @property {number|null} expiry - Expiration timestamp or null for permanent
- */
-
-/**
- * Generate cache key for a contract name entry.
+ * Get contract name from unified cache.
  * @param {string|number} chainId - The chain ID
  * @param {string} address - The contract address
- * @returns {string} Cache key
- */
-function getCacheKey(chainId, address) {
-  return `${CACHE_PREFIX}${chainId}:${address.toLowerCase()}`;
-}
-
-/**
- * Get contract name from browser cache.
- * @param {string|number} chainId - The chain ID
- * @param {string} address - The contract address
- * @returns {CacheEntry|null} Cache entry or null if not cached/expired
+ * @returns {{name: string}|null} Cache entry or null if not cached
  */
 function getFromCache(chainId, address) {
-  try {
-    const key = getCacheKey(chainId, address);
-    const cached = localStorage.getItem(key);
-    
-    if (!cached) return null;
-    
-    const entry = JSON.parse(cached);
-    
-    // Check expiration
-    if (entry.expiry && Date.now() > entry.expiry) {
-      // Expired, remove from cache
-      localStorage.removeItem(key);
-      log('debug', 'contract-name', 'Cache expired, removing', { chainId, address });
-      return null;
-    }
-    
-    return entry;
-  } catch (e) {
-    log('debug', 'contract-name', 'Failed to read from cache', { error: e.message });
-    return null;
+  // Check in-memory "not found" cache
+  const notFoundKey = `${chainId}:${address.toLowerCase()}`;
+  const notFoundExpiry = notFoundCache.get(notFoundKey);
+  if (notFoundExpiry && Date.now() < notFoundExpiry) {
+    log('debug', 'contract-name', 'Not found (in-memory cache)', { chainId, address });
+    return { name: null };
   }
+  
+  // Check unified cache
+  const cached = getContractCache(chainId, address);
+  if (cached && cached.name) {
+    log('debug', 'contract-name', 'Found in cache', { chainId, address, name: cached.name });
+    return { name: cached.name };
+  }
+  
+  return null;
 }
 
 /**
- * Save contract name to browser cache.
+ * Save contract name to unified cache.
  * @param {string|number} chainId - The chain ID
  * @param {string} address - The contract address
  * @param {string|null} name - The contract name or null if not found
  */
 function saveToCache(chainId, address, name) {
-  try {
-    const key = getCacheKey(chainId, address);
-    const entry = {
-      name: name,
-      // If name found: no expiration (permanent cache)
-      // If not found: expire after 1 hour
-      expiry: name ? null : Date.now() + NOT_FOUND_EXPIRY_MS
-    };
-    
-    localStorage.setItem(key, JSON.stringify(entry));
-    log('debug', 'contract-name', 'Saved to cache', { 
-      chainId, 
-      address, 
-      name,
-      permanent: !!name
-    });
-  } catch (e) {
-    log('debug', 'contract-name', 'Failed to save to cache', { error: e.message });
+  if (name) {
+    // Save found name to unified cache
+    setContractCache(chainId, address, { name });
+    log('debug', 'contract-name', 'Saved to cache', { chainId, address, name });
+  } else {
+    // Save "not found" to in-memory cache (not persisted)
+    const notFoundKey = `${chainId}:${address.toLowerCase()}`;
+    notFoundCache.set(notFoundKey, Date.now() + NOT_FOUND_EXPIRY_MS);
+    log('debug', 'contract-name', 'Marked as not found', { chainId, address });
   }
 }
 
@@ -439,38 +409,10 @@ function updateAddressWithNames(nameMap, getElementIds) {
   log('info', 'contract-name', 'Updated address displays with names', { updatedCount });
 }
 
-/**
- * Clear all contract name cache entries.
- * Useful for debugging or when user wants to refresh data.
- * @returns {number} Number of entries removed
- */
-function clearNameCache() {
-  try {
-    const keysToRemove = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key && key.startsWith(CACHE_PREFIX)) {
-        keysToRemove.push(key);
-      }
-    }
-    
-    for (const key of keysToRemove) {
-      localStorage.removeItem(key);
-    }
-    
-    log('info', 'contract-name', 'Cleared name cache', { entriesRemoved: keysToRemove.length });
-    return keysToRemove.length;
-  } catch (e) {
-    log('error', 'contract-name', 'Failed to clear cache', { error: e.message });
-    return 0;
-  }
-}
-
 // Export for ES modules
 export {
   fetchContractNames,
   updateAddressWithNames,
   getFromCache,
-  saveToCache,
-  clearNameCache
+  saveToCache
 };
