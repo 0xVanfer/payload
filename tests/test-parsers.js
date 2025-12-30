@@ -4,6 +4,7 @@
  * Tests URL detection and parsing for different transaction sources.
  */
 
+import { createTestRunner } from './test-utils.js';
 import { 
   parseLink, 
   detectLinkType, 
@@ -19,48 +20,8 @@ import {
   detectTenderlyUrlType 
 } from '../js/parsers/tenderly.js';
 
-/**
- * Test runner utility.
- */
-const TestRunner = {
-  passed: 0,
-  failed: 0,
-  
-  async test(name, testFn) {
-    try {
-      const result = await testFn();
-      if (result !== false) {
-        this.passed++;
-        console.log(`✓ ${name}`);
-      } else {
-        this.failed++;
-        console.error(`✗ ${name}: returned false`);
-      }
-    } catch (e) {
-      this.failed++;
-      console.error(`✗ ${name}: ${e.message}`);
-    }
-  },
-  
-  assertEqual(actual, expected, message = '') {
-    if (actual !== expected) {
-      throw new Error(`${message} Expected ${expected}, got ${actual}`);
-    }
-  },
-  
-  assertTrue(value, message = '') {
-    if (!value) {
-      throw new Error(`${message} Expected truthy, got ${value}`);
-    }
-  },
-  
-  summary() {
-    console.log('\n' + '='.repeat(50));
-    console.log(`Tests: ${this.passed + this.failed}, Passed: ${this.passed}, Failed: ${this.failed}`);
-    console.log('='.repeat(50));
-    return this.failed === 0;
-  }
-};
+// Create test runner instance
+const TestRunner = createTestRunner();
 
 /**
  * Etherscan Parser Tests

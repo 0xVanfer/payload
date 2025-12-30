@@ -18,15 +18,26 @@ Ethereum transaction payload decoder with recursive parsing support for Multical
 ```
 payload/
 ├── index.html              # Main entry page
+├── cache-manager.html      # Cache management page
+├── vnet-reader.html        # VNet contract reader page
 ├── css/
-│   └── styles.css          # Stylesheet
+│   ├── styles.css          # Main stylesheet
+│   ├── cache-manager.css   # Cache manager styles
+│   └── vnet-reader.css     # VNet reader styles
 ├── js/
-│   ├── app.js              # Application entry, event bindings
+│   ├── app.js              # Main application entry
+│   ├── cache-manager-app.js # Cache manager entry
 │   ├── config/
-│   │   ├── chains.js       # Chain config (explorer URLs, names)
+│   │   ├── chains.js       # Chain config (explorer URLs, RPC, names)
+│   │   ├── etherscan-api.js # Etherscan API utilities
+│   │   ├── presets.js      # VNet reader method presets
 │   │   └── signatures.js   # Local common signatures database
 │   ├── core/
 │   │   ├── abi-utils.js    # ABI encoding/decoding utilities
+│   │   ├── address-collector.js # Address collection from decoded results
+│   │   ├── cache-manager.js # Unified cache management
+│   │   ├── contract-info.js # Contract info lookup (symbol, name)
+│   │   ├── contract-name.js # Contract name resolution
 │   │   ├── decoder.js      # Main decoder orchestration module
 │   │   ├── multicall.js    # Multicall pattern parser
 │   │   ├── safe.js         # Safe transaction parser
@@ -34,19 +45,33 @@ payload/
 │   ├── parsers/
 │   │   ├── index.js        # Parser registry entry
 │   │   ├── etherscan.js    # Etherscan link parser
-│   │   ├── tenderly.js     # Tenderly link parser
-│   │   └── placeholder.js  # New parser template
-│   └── ui/
-│       ├── renderer.js     # UI rendering module
-│       ├── tuple-render.js # Tuple type renderer
-│       ├── value-format.js # Value formatting utilities
-│       └── copy-utils.js   # Copy button utilities
+│   │   ├── safe.js         # Safe app link parser
+│   │   └── tenderly.js     # Tenderly link parser
+│   ├── ui/
+│   │   ├── copy-utils.js   # Copy button utilities
+│   │   ├── renderer.js     # UI rendering module
+│   │   ├── tuple-render.js # Tuple type renderer
+│   │   └── value-format.js # Value formatting utilities
+│   └── vnet-reader/
+│       ├── abi-fetcher.js  # ABI fetching for VNet
+│       ├── address.js      # Address management
+│       ├── call.js         # Contract call execution
+│       ├── connection.js   # RPC connection handling
+│       ├── history.js      # Call history management
+│       ├── index.js        # VNet reader entry
+│       ├── method.js       # Method selector handling
+│       ├── state.js        # Application state
+│       └── utils.js        # Shared utilities
 └── tests/
     ├── test-runner.html    # Browser test page
+    ├── test-utils.js       # Shared test utilities
     ├── test-decoder.js     # Decoder tests
     ├── test-multicall.js   # Multicall tests
     ├── test-parsers.js     # Link parser tests
-    └── test-payloads.json  # Test data
+    ├── test-contract-info.js # Contract info tests
+    ├── test-payloads.json  # Test data
+    ├── quick-test.html     # Quick integration tests
+    └── verify-signatures.js # Signature verification script
 ```
 
 ## 🚀 Quick Start
@@ -145,11 +170,13 @@ open http://localhost:8080/tests/test-runner.html
 
 ### Test Coverage
 
-| Module    | Test File         | Coverage                          |
-| --------- | ----------------- | --------------------------------- |
-| Decoder   | test-decoder.js   | Multicall, Safe recursive parsing |
-| Multicall | test-multicall.js | Various Multicall patterns        |
-| Parsers   | test-parsers.js   | Link parsing, API calls           |
+| Module      | Test File            | Coverage                           |
+| ----------- | -------------------- | ---------------------------------- |
+| Decoder     | test-decoder.js      | ABI utils, payload splitting       |
+| Multicall   | test-multicall.js    | Multicall & Safe pattern detection |
+| Parsers     | test-parsers.js      | Etherscan, Tenderly link parsing   |
+| Integration | quick-test.html      | Quick integration smoke tests      |
+| Signatures  | verify-signatures.js | Signature verification (Node.js)   |
 
 ## 🔧 Configuration
 
@@ -163,6 +190,7 @@ const CHAIN_CONFIG = {
     12345: {
         explorer: "https://explorer.newchain.io",
         name: "New Chain",
+        rpc: "https://rpc.newchain.io",
     },
 };
 ```
@@ -176,6 +204,27 @@ const COMMON_SIGNATURES = {
     // ... existing signatures
     "0x12345678": ["myFunction(address,uint256)"],
 };
+```
+
+### Adding New Link Parsers
+
+Create a new parser file in [js/parsers/](js/parsers/) and register it in [js/parsers/index.js](js/parsers/index.js):
+
+```javascript
+// 1. Create js/parsers/myexplorer.js
+export function isMyExplorerLink(url) {
+    /* detection logic */
+}
+export async function parseMyExplorerLink(url) {
+    /* parsing logic */
+}
+
+// 2. Register in js/parsers/index.js
+import { isMyExplorerLink, parseMyExplorerLink } from "./myexplorer.js";
+const parsers = [
+    // ... existing parsers
+    { name: "myexplorer", detect: isMyExplorerLink, parse: parseMyExplorerLink },
+];
 ```
 
 ## 📚 Tech Stack

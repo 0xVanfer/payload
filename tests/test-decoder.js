@@ -4,6 +4,7 @@
  * Tests payload splitting, signature lookup, and decoding functionality.
  */
 
+import { createTestRunner } from './test-utils.js';
 import { 
   decodePayload, 
   splitPayloadIntoCalls,
@@ -18,75 +19,8 @@ import {
   decodeWithSignature
 } from '../js/core/abi-utils.js';
 
-/**
- * Test runner utility.
- */
-const TestRunner = {
-  passed: 0,
-  failed: 0,
-  
-  /**
-   * Run a test case.
-   * @param {string} name - Test name
-   * @param {Function} testFn - Test function (returns boolean or throws)
-   */
-  async test(name, testFn) {
-    try {
-      const result = await testFn();
-      if (result !== false) {
-        this.passed++;
-        console.log(`✓ ${name}`);
-      } else {
-        this.failed++;
-        console.error(`✗ ${name}: returned false`);
-      }
-    } catch (e) {
-      this.failed++;
-      console.error(`✗ ${name}: ${e.message}`);
-      console.error(e.stack);
-    }
-  },
-  
-  /**
-   * Assert equality.
-   */
-  assertEqual(actual, expected, message = '') {
-    if (actual !== expected) {
-      throw new Error(`${message} Expected ${expected}, got ${actual}`);
-    }
-  },
-  
-  /**
-   * Assert truthy.
-   */
-  assertTrue(value, message = '') {
-    if (!value) {
-      throw new Error(`${message} Expected truthy value, got ${value}`);
-    }
-  },
-  
-  /**
-   * Assert array length.
-   */
-  assertLength(arr, length, message = '') {
-    if (!Array.isArray(arr)) {
-      throw new Error(`${message} Expected array, got ${typeof arr}`);
-    }
-    if (arr.length !== length) {
-      throw new Error(`${message} Expected length ${length}, got ${arr.length}`);
-    }
-  },
-  
-  /**
-   * Print summary.
-   */
-  summary() {
-    console.log('\n' + '='.repeat(50));
-    console.log(`Tests: ${this.passed + this.failed}, Passed: ${this.passed}, Failed: ${this.failed}`);
-    console.log('='.repeat(50));
-    return this.failed === 0;
-  }
-};
+// Create test runner instance
+const TestRunner = createTestRunner();
 
 /**
  * ABI Utilities Tests

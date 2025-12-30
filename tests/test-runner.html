@@ -187,6 +187,7 @@
     <button id="runDecoderBtn" class="secondary" onclick="runSingleSuite('decoder')">Decoder Tests</button>
     <button id="runMulticallBtn" class="secondary" onclick="runSingleSuite('multicall')">Multicall Tests</button>
     <button id="runParsersBtn" class="secondary" onclick="runSingleSuite('parsers')">Parser Tests</button>
+    <button class="secondary" onclick="window.open('quick-test.html', '_blank')">Quick Integration</button>
     <button class="secondary" onclick="clearOutput()">Clear</button>
   </div>
   
@@ -312,17 +313,17 @@
       try {
         // Import and run decoder tests
         log('\n=== DECODER TESTS ===\n', 'header');
-        const decoderModule = await import('./test-decoder.js');
+        const decoderModule = await import('./test-decoder.js?v=1.0.11');
         await decoderModule.runAllTests();
         
         // Import and run multicall tests
         log('\n=== MULTICALL TESTS ===\n', 'header');
-        const multicallModule = await import('./test-multicall.js');
+        const multicallModule = await import('./test-multicall.js?v=1.0.11');
         await multicallModule.runAllTests();
         
         // Import and run parser tests
         log('\n=== PARSER TESTS ===\n', 'header');
-        const parsersModule = await import('./test-parsers.js');
+        const parsersModule = await import('./test-parsers.js?v=1.0.11');
         await parsersModule.runAllTests();
         
       } catch (e) {
@@ -348,7 +349,7 @@
       log(`Starting ${capitalize(suite)} Tests...`, 'header');
       
       try {
-        const module = await import(`./test-${suite}.js`);
+        const module = await import(`./test-${suite}.js?v=1.0.11`);
         await module.runAllTests();
       } catch (e) {
         log(`Error running ${suite} tests: ${e.message}`, 'fail');
