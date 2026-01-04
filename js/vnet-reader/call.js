@@ -475,9 +475,12 @@ function formatValue(value, type) {
  * @param {any} value - The value to format
  * @param {string} type - The Solidity type
  * @param {string} id - Unique ID prefix for interactive elements
+ * @param {Object} [context] - Optional context for numeric index tracking
+ * @param {number} [context.numericIndex] - The numeric field index for linking vnet/prod values
+ * @param {string} [context.env] - The environment ('vnet' or 'prod')
  * @returns {string} HTML string
  */
-function formatValueForDisplay(value, type, id) {
+function formatValueForDisplay(value, type, id, context = {}) {
   // Handle null/undefined
   if (value === null || value === undefined) {
     return `<span class="result-value-null">null</span>`;
@@ -486,7 +489,14 @@ function formatValueForDisplay(value, type, id) {
   // Handle arrays
   if (Array.isArray(value)) {
     const baseType = type.replace(/\[\d*\]$/, '').replace('[]', '');
-    const items = value.map((v, i) => formatValueForDisplay(v, baseType, `${id}-${i}`));
+    const items = value.map((v, i) => {
+      // For arrays of numbers, each element gets its own numeric index
+      const itemContext = { ...context };
+      if (baseType.startsWith('uint') || baseType.startsWith('int')) {
+        itemContext.numericIndex = (context.numericIndex ?? 0) + i;
+      }
+      return formatValueForDisplay(v, baseType, `${id}-${i}`, itemContext);
+    });
     return `<div class="result-array">[${items.join(', ')}]</div>`;
   }
   
@@ -500,19 +510,22 @@ function formatValueForDisplay(value, type, id) {
     return `<span class="result-value-address">${link}</span>`;
   }
   
-  // Handle uint/int types - add decimal selector
+  // Handle uint/int types - add decimal selector with numeric index for vnet/prod linking
   if (type && (type.startsWith('uint') || type.startsWith('int'))) {
     const strValue = String(value);
+    const numericIndex = context.numericIndex ?? 0;
+    const env = context.env || '';
     return `
-      <span class="result-value-number">
+      <span class="result-value-number" data-numeric-index="${numericIndex}" data-env="${env}">
         <span class="uint256-value">${escapeHtml(strValue)}</span>
-        <select class="decimal-select" data-value="${escapeHtml(strValue)}" data-id="${id}">
+        <select class="decimal-select" data-value="${escapeHtml(strValue)}" data-id="${id}" data-numeric-index="${numericIndex}" data-env="${env}">
           <option value="0">0</option>
           <option value="6">6</option>
           <option value="8">8</option>
           <option value="18">18</option>
         </select>
         <span class="formatted-value" id="${id}-result"></span>
+        <span class="diff-value" id="${id}-diff"></span>
       </span>
     `;
   }
@@ -536,16 +549,48 @@ function formatValueForDisplay(value, type, id) {
  * @param {any} data - The decoded data
  * @param {string[]} outputTypes - The output types
  * @param {string} idPrefix - ID prefix for interactive elements
+ * @param {string} [env] - The environment ('vnet' or 'prod') for linking numeric values
  * @returns {string} HTML string
  */
-function formatResultDataHtml(data, outputTypes, idPrefix) {
+function formatResultDataHtml(data, outputTypes, idPrefix, env = '') {
   if (data === null || data === undefined) {
     return '<span class="result-value-null">null</span>';
   }
   
+  // Track numeric field index for linking vnet/prod values
+  let numericIndex = 0;
+  
+  /**
+   * Helper to get context for a type.
+   * For numeric types, assigns the current numericIndex.
+   * For array types containing numerics, assigns the starting numericIndex.
+   * @param {string} type - The Solidity type
+   * @param {any} value - The value (needed for arrays to count elements)
+   * @returns {Object} Context object with env and optionally numericIndex
+   */
+  function getContextForType(type, value) {
+    const context = { env };
+    const baseType = type ? type.replace(/\[\d*\]$/, '').replace('[]', '') : '';
+    
+    if (type && (type.startsWith('uint') || type.startsWith('int'))) {
+      // Single numeric value
+      context.numericIndex = numericIndex++;
+    } else if (type && type.includes('[]') && (baseType.startsWith('uint') || baseType.startsWith('int'))) {
+      // Array of numerics - assign starting index and reserve indices for all elements
+      context.numericIndex = numericIndex;
+      if (Array.isArray(value)) {
+        numericIndex += value.length;
+      } else {
+        numericIndex++;
+      }
+    }
+    return context;
+  }
+  
   // Handle auto-detected result
   if (data && data.detectedType !== undefined) {
-    return formatValueForDisplay(data.value, data.detectedType, `${idPrefix}-0`);
+    const context = getContextForType(data.detectedType, data.value);
+    return formatValueForDisplay(data.value, data.detectedType, `${idPrefix}-0`, context);
   }
   
   // Single value
@@ -554,7 +599,8 @@ function formatResultDataHtml(data, outputTypes, idPrefix) {
   }
   
   if (outputTypes.length === 1) {
-    return formatValueForDisplay(data, outputTypes[0], `${idPrefix}-0`);
+    const context = getContextForType(outputTypes[0], data);
+    return formatValueForDisplay(data, outputTypes[0], `${idPrefix}-0`, context);
   }
   
   // Multiple values (object with value0, value1, etc.)
@@ -564,7 +610,8 @@ function formatResultDataHtml(data, outputTypes, idPrefix) {
       const key = `value${i}`;
       const val = data[key];
       const type = outputTypes[i];
-      entries.push(`<div class="result-multi-value"><span class="result-key">${key} (${escapeHtml(type)}):</span> ${formatValueForDisplay(val, type, `${idPrefix}-${i}`)}</div>`);
+      const context = getContextForType(type, val);
+      entries.push(`<div class="result-multi-value"><span class="result-key">${key} (${escapeHtml(type)}):</span> ${formatValueForDisplay(val, type, `${idPrefix}-${i}`, context)}</div>`);
     }
     return entries.join('');
   }
@@ -573,7 +620,104 @@ function formatResultDataHtml(data, outputTypes, idPrefix) {
 }
 
 /**
+ * Format a number value with decimals.
+ * @param {string} rawValue - The raw numeric string
+ * @param {number} decimals - The decimals to apply
+ * @returns {string|null} The formatted value or null if invalid
+ */
+function formatNumberWithDecimals(rawValue, decimals) {
+  if (decimals <= 0) return null;
+  try {
+    const num = BigInt(rawValue);
+    const denom = BigInt('1' + '0'.repeat(decimals));
+    const result = Number(num) / Number(denom);
+    if (isFinite(result)) {
+      return result.toFixed(6).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    }
+  } catch {
+    // Ignore
+  }
+  return null;
+}
+
+/**
+ * Calculate the difference between two numeric values and format it.
+ * @param {string} vnetValue - VNet raw value
+ * @param {string} prodValue - Production raw value
+ * @param {number} decimals - The decimals to apply
+ * @returns {{diff: string, isPositive: boolean, isZero: boolean}|null} The formatted difference or null
+ */
+function calculateDifference(vnetValue, prodValue, decimals) {
+  try {
+    const vnet = BigInt(vnetValue);
+    const prod = BigInt(prodValue);
+    const diff = vnet - prod;
+    
+    if (diff === 0n) {
+      return { diff: '0', isPositive: true, isZero: true };
+    }
+    
+    const isPositive = diff > 0n;
+    const absDiff = isPositive ? diff : -diff;
+    
+    let diffStr;
+    if (decimals > 0) {
+      const denom = BigInt('1' + '0'.repeat(decimals));
+      const result = Number(absDiff) / Number(denom);
+      if (isFinite(result)) {
+        diffStr = result.toFixed(6).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+      } else {
+        diffStr = absDiff.toString();
+      }
+    } else {
+      diffStr = absDiff.toString();
+    }
+    
+    return { diff: diffStr, isPositive, isZero: false };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Update the difference display for a numeric field.
+ * @param {HTMLElement} container - The container element
+ * @param {number} numericIndex - The numeric field index
+ * @param {number} decimals - The current decimals value
+ */
+function updateDiffDisplay(container, numericIndex, decimals) {
+  const vnetSelect = container.querySelector(`.decimal-select[data-numeric-index="${numericIndex}"][data-env="vnet"]`);
+  const prodSelect = container.querySelector(`.decimal-select[data-numeric-index="${numericIndex}"][data-env="prod"]`);
+  
+  if (!vnetSelect || !prodSelect) return;
+  
+  const vnetValue = vnetSelect.dataset.value;
+  const prodValue = prodSelect.dataset.value;
+  
+  // Update diff display on vnet side
+  const vnetDiffId = vnetSelect.dataset.id + '-diff';
+  const vnetDiffSpan = document.getElementById(vnetDiffId);
+  
+  if (vnetDiffSpan) {
+    // Check if values are different
+    if (vnetValue !== prodValue) {
+      const diffResult = calculateDifference(vnetValue, prodValue, decimals);
+      if (diffResult && !diffResult.isZero) {
+        const sign = diffResult.isPositive ? '+' : '-';
+        const colorClass = diffResult.isPositive ? 'diff-positive' : 'diff-negative';
+        vnetDiffSpan.innerHTML = `<span class="${colorClass}">(${sign}${diffResult.diff})</span>`;
+      } else {
+        vnetDiffSpan.textContent = '';
+      }
+    } else {
+      vnetDiffSpan.textContent = '';
+    }
+  }
+}
+
+/**
  * Initialize decimal selector event handlers after rendering.
+ * Implements linked decimals between vnet and prod values with the same numeric index.
  * @param {HTMLElement} container - The container element
  */
 function initDecimalSelectors(container) {
@@ -583,22 +727,37 @@ function initDecimalSelectors(container) {
       const rawValue = e.target.dataset.value;
       const resultId = e.target.dataset.id + '-result';
       const resultSpan = document.getElementById(resultId);
+      const numericIndex = e.target.dataset.numericIndex;
+      const env = e.target.dataset.env;
       
-      if (resultSpan && decimals > 0) {
-        try {
-          const num = BigInt(rawValue);
-          const denom = BigInt('1' + '0'.repeat(decimals));
-          const result = Number(num) / Number(denom);
-          if (isFinite(result)) {
-            resultSpan.textContent = '= ' + result.toFixed(6).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-          } else {
-            resultSpan.textContent = '';
+      // Update formatted value for this selector
+      if (resultSpan) {
+        const formatted = formatNumberWithDecimals(rawValue, decimals);
+        resultSpan.textContent = formatted ? `= ${formatted}` : '';
+      }
+      
+      // Link decimals: update the corresponding selector in the other environment
+      if (numericIndex !== undefined && env) {
+        const otherEnv = env === 'vnet' ? 'prod' : 'vnet';
+        const otherSelect = container.querySelector(
+          `.decimal-select[data-numeric-index="${numericIndex}"][data-env="${otherEnv}"]`
+        );
+        
+        if (otherSelect && otherSelect.value !== e.target.value) {
+          // Update the other selector's value
+          otherSelect.value = e.target.value;
+          
+          // Update the other selector's formatted result
+          const otherResultId = otherSelect.dataset.id + '-result';
+          const otherResultSpan = document.getElementById(otherResultId);
+          if (otherResultSpan) {
+            const otherFormatted = formatNumberWithDecimals(otherSelect.dataset.value, decimals);
+            otherResultSpan.textContent = otherFormatted ? `= ${otherFormatted}` : '';
           }
-        } catch {
-          resultSpan.textContent = '';
         }
-      } else if (resultSpan) {
-        resultSpan.textContent = '';
+        
+        // Update difference display
+        updateDiffDisplay(container, numericIndex, decimals);
       }
     });
   });
@@ -646,11 +805,11 @@ export function showResult(result) {
       sourceLabel = '<span class="result-source user">User-defined output</span>';
     }
     
-    // Build VNet result HTML
-    const vnetHtml = buildEnvResultHtml(result.vnet, outputTypes, `${idPrefix}-vnet`);
+    // Build VNet result HTML with env tag for decimal linking
+    const vnetHtml = buildEnvResultHtml(result.vnet, outputTypes, `${idPrefix}-vnet`, 'vnet');
     
-    // Build Production result HTML
-    const prodHtml = buildEnvResultHtml(result.production, outputTypes, `${idPrefix}-prod`);
+    // Build Production result HTML with env tag for decimal linking
+    const prodHtml = buildEnvResultHtml(result.production, outputTypes, `${idPrefix}-prod`, 'prod');
     
     // Check if values are different
     const isDifferent = checkValuesDifferent(result.vnet, result.production);
@@ -760,9 +919,10 @@ export function showResult(result) {
  * @param {Object} envResult - The environment result object
  * @param {string[]} outputTypes - The output types
  * @param {string} idPrefix - ID prefix for interactive elements
+ * @param {string} [env] - The environment ('vnet' or 'prod') for linking numeric values
  * @returns {string} HTML string
  */
-function buildEnvResultHtml(envResult, outputTypes, idPrefix) {
+function buildEnvResultHtml(envResult, outputTypes, idPrefix, env = '') {
   if (envResult.error) {
     return `<div class="env-error">${escapeHtml(envResult.message)}</div>`;
   }
@@ -771,7 +931,7 @@ function buildEnvResultHtml(envResult, outputTypes, idPrefix) {
     return `<span class="result-value-raw">${escapeHtml(String(envResult.decoded))}</span>`;
   }
   
-  return formatResultDataHtml(envResult.decoded, outputTypes, idPrefix);
+  return formatResultDataHtml(envResult.decoded, outputTypes, idPrefix, env);
 }
 
 /**

@@ -711,6 +711,23 @@
   font-size: 13px;
 }
 
+/* Difference value display */
+.result-value-number .diff-value {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  margin-left: 4px;
+}
+
+.result-value-number .diff-value .diff-positive {
+  color: #2e7d32;
+  font-weight: 500;
+}
+
+.result-value-number .diff-value .diff-negative {
+  color: #c62828;
+  font-weight: 500;
+}
+
 .result-value-bool {
   color: var(--color-secondary);
   font-family: var(--font-mono);
