@@ -11,7 +11,7 @@ import { loadContractABI, hasContractABI } from './abi-fetcher.js';
 import { addContractABICategory } from './method.js';
 import { getFromCache, saveToCache } from '../core/contract-name.js';
 import { getNextApiKey, getApiUrl, isRoutescanChain } from '../config/etherscan-api.js';
-import { getVnetDefaultAddresses } from '../core/cache-manager.js';
+import { getVnetDefaultAddresses, getAddressDisplayName } from '../core/cache-manager.js';
 
 /**
  * Initialize the address selector with discovered addresses.
@@ -181,14 +181,25 @@ export function updateExplorerButton() {
 
 /**
  * Fetch symbols for multiple addresses in parallel.
+ * Checks cache-manager first for existing data (customName, symbol, name).
  * @param {string[]} addresses - The addresses to fetch symbols for
  */
 export async function fetchAllAddressSymbols(addresses) {
   if (!state.provider) return;
   
   const promises = addresses.map(async (address) => {
-    // Skip if already cached
-    if (state.addressSymbols[address.toLowerCase()]) return;
+    const normalizedAddr = address.toLowerCase();
+    
+    // Skip if already cached in local state
+    if (state.addressSymbols[normalizedAddr]) return;
+    
+    // Check cache-manager first - if we already have display info, skip RPC call
+    const { displayName } = getAddressDisplayName(state.chainId, address);
+    if (displayName) {
+      // Store in local state for faster access
+      state.addressSymbols[normalizedAddr] = displayName;
+      return;
+    }
     
     try {
       const contract = new window.ethers.Contract(
@@ -198,7 +209,7 @@ export async function fetchAllAddressSymbols(addresses) {
       );
       
       const symbol = await contract.symbol();
-      state.addressSymbols[address.toLowerCase()] = symbol;
+      state.addressSymbols[normalizedAddr] = symbol;
     } catch (e) {
       // Not a token contract, ignore
     }
@@ -214,25 +225,39 @@ export async function fetchAllAddressSymbols(addresses) {
 /**
  * Fetch contract names for addresses without symbols.
  * Uses Etherscan API via cache module.
+ * Skips addresses that already have display names from cache-manager.
  * @param {string[]} addresses - The addresses to fetch names for
  */
 export async function fetchAllContractNames(addresses) {
-  // Filter addresses without symbols
-  const addressesWithoutSymbol = addresses.filter(addr => 
-    !state.addressSymbols[addr.toLowerCase()]
-  );
+  // Filter addresses without symbols and without cached display names
+  const addressesNeedingLookup = addresses.filter(addr => {
+    const normalizedAddr = addr.toLowerCase();
+    
+    // Skip if already has symbol
+    if (state.addressSymbols[normalizedAddr]) return false;
+    
+    // Skip if already has contract name
+    if (state.addressContractNames[normalizedAddr]) return false;
+    
+    // Skip if cache-manager already has display name
+    const { displayName } = getAddressDisplayName(state.chainId, addr);
+    if (displayName) {
+      // Store in local state for faster access
+      state.addressContractNames[normalizedAddr] = displayName;
+      return false;
+    }
+    
+    return true;
+  });
   
-  if (addressesWithoutSymbol.length === 0) return;
+  if (addressesNeedingLookup.length === 0) return;
   
-  console.log('[Address] Fetching contract names for', addressesWithoutSymbol.length, 'addresses');
+  console.log('[Address] Fetching contract names for', addressesNeedingLookup.length, 'addresses');
   
-  const promises = addressesWithoutSymbol.map(async (address) => {
+  const promises = addressesNeedingLookup.map(async (address) => {
     const normalizedAddr = address.toLowerCase();
     
-    // Skip if already cached in state
-    if (state.addressContractNames[normalizedAddr]) return;
-    
-    // Check browser cache first
+    // Check browser cache first (contract-name module cache)
     const cached = getFromCache(state.chainId, address);
     if (cached !== null) {
       if (cached.name) {
@@ -385,45 +410,56 @@ async function fetchImplementationName(address, chainId) {
 }
 
 /**
- * Sort addresses by symbol presence (addresses with symbols first).
+ * Sort addresses by display name presence (addresses with display names first).
+ * Uses getAddressDisplayName for consistent priority with main app.
  * @param {string[]} addresses - The addresses to sort
  * @returns {string[]} Sorted addresses
  */
 export function sortAddressesBySymbol(addresses) {
   return [...addresses].sort((a, b) => {
-    const symbolA = state.addressSymbols[a.toLowerCase()];
-    const symbolB = state.addressSymbols[b.toLowerCase()];
-    const nameA = state.addressContractNames[a.toLowerCase()];
-    const nameB = state.addressContractNames[b.toLowerCase()];
+    // Get display names using consistent priority from cache-manager
+    const { displayName: displayA } = getAddressDisplayName(state.chainId, a);
+    const { displayName: displayB } = getAddressDisplayName(state.chainId, b);
     
-    // Both have symbols - sort alphabetically by symbol
-    if (symbolA && symbolB) {
-      return symbolA.localeCompare(symbolB);
-    }
-    // Only a has symbol - a comes first
-    if (symbolA && !symbolB) return -1;
-    // Only b has symbol - b comes first
-    if (!symbolA && symbolB) return 1;
+    // Fallback to local state if not in cache
+    const nameA = displayA || state.addressSymbols[a.toLowerCase()] || state.addressContractNames[a.toLowerCase()];
+    const nameB = displayB || state.addressSymbols[b.toLowerCase()] || state.addressContractNames[b.toLowerCase()];
     
-    // Neither has symbol - check contract names
+    // Both have names - sort alphabetically
     if (nameA && nameB) {
       return nameA.localeCompare(nameB);
     }
+    // Only a has name - a comes first
     if (nameA && !nameB) return -1;
+    // Only b has name - b comes first
     if (!nameA && nameB) return 1;
     
-    // Neither has symbol nor contract name - maintain original order
+    // Neither has name - maintain original order
     return 0;
   });
 }
 
 /**
  * Format an address for display in the dropdown.
- * Shows symbol first if available, then contract name, for easy identification.
+ * Uses cache-manager's getAddressDisplayName for consistent priority:
+ * 1. customName from chainId 0 (global)
+ * 2. customName from specific chainId
+ * 3. symbol from specific chainId
+ * 4. name from chainId 0 (global)
+ * 5. name from specific chainId
+ * 6. Fallback to state.addressSymbols / state.addressContractNames
  * @param {string} address - The address
  * @returns {string} Formatted string
  */
 export function formatAddressOption(address) {
+  // First check cache-manager for consistent display name (supports global chainId 0)
+  const { displayName, source } = getAddressDisplayName(state.chainId, address);
+  
+  if (displayName) {
+    return formatAddress(address, displayName, null);
+  }
+  
+  // Fallback to local state (for freshly fetched data not yet in cache)
   const symbol = state.addressSymbols[address.toLowerCase()];
   const contractName = state.addressContractNames[address.toLowerCase()];
   return formatAddress(address, symbol, contractName);
