@@ -239,7 +239,8 @@ async function fetchPublicSimulation(account, project, simId) {
  * @returns {Promise<Object>} The API response data
  */
 async function fetchSharedSimulation(simId) {
-  const url = `${TENDERLY_API_BASE}/simulations/${simId}/share`;
+  // Primary endpoint: /api/v1/simulations/{simId}
+  const url = `${TENDERLY_API_BASE}/simulations/${simId}`;
   log('debug', 'tenderly', 'Fetching shared simulation', { url });
   
   const response = await fetch(url, {
@@ -249,20 +250,7 @@ async function fetchSharedSimulation(simId) {
   });
   
   if (!response.ok) {
-    // Try alternative endpoint
-    const altUrl = `${TENDERLY_API_BASE}/public/simulations/${simId}`;
-    log('debug', 'tenderly', 'Trying alternative endpoint', { url: altUrl });
-    
-    const altResponse = await fetch(altUrl, {
-      headers: {
-        'Accept': 'application/json, text/plain, */*',
-      }
-    });
-    
-    if (!altResponse.ok) {
-      throw new Error(`API request failed: ${response.status}`);
-    }
-    return await altResponse.json();
+    throw new Error(`API request failed: ${response.status}`);
   }
   
   return await response.json();
