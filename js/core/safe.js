@@ -111,6 +111,109 @@ function decodeExecTransaction(payload) {
 }
 
 /**
+ * Parse the packed bytes from a Safe multiSend call.
+ * 
+ * This function parses the raw packed bytes data (after ABI decoding),
+ * NOT the full multiSend(bytes) payload. Use this when you have already
+ * decoded the multiSend function and extracted the bytes parameter.
+ * 
+ * The packed format for each transaction is:
+ * - 1 byte: operation (0 = call, 1 = delegatecall)
+ * - 20 bytes: to address
+ * - 32 bytes: value
+ * - 32 bytes: data length
+ * - N bytes: data
+ * 
+ * @param {string} packedBytes - The packed bytes data (with or without 0x prefix)
+ * @returns {Array<{
+ *   operation: number,
+ *   operationName: string,
+ *   address: string,
+ *   value: string,
+ *   data: string
+ * }>} Array of parsed transactions
+ */
+function parseMultiSendPackedBytes(packedBytes) {
+  log('debug', 'safe', 'Parsing multiSend packed bytes', { length: packedBytes?.length });
+  
+  // Normalize: remove 0x prefix
+  let hexStr = (packedBytes || '').replace(/^0x/i, '');
+  
+  const transactions = [];
+  let position = 0;
+  
+  while (hexStr.length > 0) {
+    // Minimum length: operation(2) + to(40) + value(64) + dataLength(64) = 170 hex chars
+    if (hexStr.length < 170) {
+      log('debug', 'safe', 'Remaining data too short, stopping parse', { 
+        remaining: hexStr.length, 
+        position 
+      });
+      break;
+    }
+    
+    // 1. Parse operation (1 byte = 2 hex chars)
+    const operationHex = hexStr.slice(0, 2);
+    const operation = parseInt(operationHex, 16);
+    hexStr = hexStr.slice(2);
+    
+    // 2. Parse to address (20 bytes = 40 hex chars)
+    const toAddress = '0x' + hexStr.slice(0, 40);
+    hexStr = hexStr.slice(40);
+    
+    // 3. Parse value (32 bytes = 64 hex chars)
+    const valueHex = hexStr.slice(0, 64);
+    const value = BigInt('0x' + valueHex).toString();
+    hexStr = hexStr.slice(64);
+    
+    // 4. Parse data length (32 bytes = 64 hex chars)
+    const dataLengthHex = hexStr.slice(0, 64);
+    const dataLength = parseInt(dataLengthHex, 16);
+    hexStr = hexStr.slice(64);
+    
+    // Validate data length
+    if (isNaN(dataLength) || dataLength < 0) {
+      log('error', 'safe', 'Invalid data length', { dataLengthHex, position });
+      break;
+    }
+    
+    if (hexStr.length < dataLength * 2) {
+      log('error', 'safe', 'Insufficient data for transaction', { 
+        needed: dataLength * 2, 
+        available: hexStr.length,
+        position 
+      });
+      break;
+    }
+    
+    // 5. Parse data
+    const data = dataLength > 0 ? '0x' + hexStr.slice(0, dataLength * 2) : '0x';
+    hexStr = hexStr.slice(dataLength * 2);
+    
+    transactions.push({
+      operation,
+      operationName: operation === 0 ? 'call' : operation === 1 ? 'delegatecall' : `unknown(${operation})`,
+      address: checksumAddress(toAddress),
+      value,
+      data
+    });
+    
+    position++;
+    log('debug', 'safe', 'Parsed transaction from packed bytes', { 
+      position, 
+      address: toAddress, 
+      operation, 
+      dataLength 
+    });
+  }
+  
+  log('info', 'safe', 'Finished parsing multiSend packed bytes', { 
+    transactionCount: transactions.length 
+  });
+  return transactions;
+}
+
+/**
  * Parse a Safe multiSend payload into individual transactions.
  * 
  * The multiSend format packs transactions as:
@@ -120,7 +223,7 @@ function decodeExecTransaction(payload) {
  * - 32 bytes: data length
  * - N bytes: data
  * 
- * @param {string} payload - The hex-encoded multiSend payload
+ * @param {string} payload - The hex-encoded multiSend payload (including selector)
  * @returns {Array<{
  *   operation: number,
  *   address: string,
@@ -143,62 +246,8 @@ function parseMultiSend(payload) {
   // The format is: selector + offset + length + packed data
   hexStr = hexStr.slice(8 + 64 + 64);
   
-  const transactions = [];
-  let position = 0;
-  
-  while (hexStr.length > 0) {
-    // Need at least operation (2) + address (40) + value (64) + length (64) = 170 chars
-    if (hexStr.length < 170) {
-      log('debug', 'safe', 'Remaining data too short, stopping parse', { remaining: hexStr.length });
-      break;
-    }
-    
-    // Parse operation type (1 byte = 2 chars)
-    const operationHex = hexStr.slice(0, 2);
-    const operation = parseInt(operationHex, 16);
-    hexStr = hexStr.slice(2);
-    
-    // Parse address (20 bytes = 40 chars)
-    const address = '0x' + hexStr.slice(0, 40);
-    hexStr = hexStr.slice(40);
-    
-    // Parse value (32 bytes = 64 chars)
-    const valueHex = hexStr.slice(0, 64);
-    const value = BigInt('0x' + valueHex).toString();
-    hexStr = hexStr.slice(64);
-    
-    // Parse data length (32 bytes = 64 chars)
-    const dataLengthHex = hexStr.slice(0, 64);
-    const dataLength = parseInt(dataLengthHex, 16);
-    hexStr = hexStr.slice(64);
-    
-    // Validate data length
-    if (isNaN(dataLength) || hexStr.length < dataLength * 2) {
-      log('warn', 'safe', 'Invalid data length or insufficient data', { 
-        dataLength, 
-        remaining: hexStr.length,
-        position 
-      });
-      break;
-    }
-    
-    // Parse data
-    const data = dataLength > 0 ? '0x' + hexStr.slice(0, dataLength * 2) : '0x';
-    hexStr = hexStr.slice(dataLength * 2);
-    
-    transactions.push({
-      operation,
-      address: checksumAddress(address),
-      value,
-      data
-    });
-    
-    position++;
-    log('debug', 'safe', 'Parsed transaction', { position, address, operation, dataLength });
-  }
-  
-  log('info', 'safe', 'Finished parsing multiSend', { transactionCount: transactions.length });
-  return transactions;
+  // Use the shared parsing logic
+  return parseMultiSendPackedBytes(hexStr);
 }
 
 /**
@@ -264,5 +313,6 @@ export {
   isMultiSend,
   decodeExecTransaction,
   parseMultiSend,
+  parseMultiSendPackedBytes,
   processSafePayload
 };

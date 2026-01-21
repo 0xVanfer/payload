@@ -43,6 +43,12 @@ const COMMON_SIGNATURES = {
   '0x694e80c3': ['changeThreshold(uint256)'],
   '0x610b5925': ['enableModule(address)'],
   
+  // Proxy Admin / Upgradeable
+  '0x9623609d': ['upgradeAndCall(address,address,bytes)'],
+  '0x99a88ec4': ['upgrade(address,address)'],
+  '0x3659cfe6': ['upgradeTo(address)'],
+  '0x4f1ef286': ['upgradeToAndCall(address,bytes)'],
+  
   // Multicall Patterns
   '0x5ae401dc': ['multicall(uint256,bytes[])'],
   '0xac9650d8': ['multicall(bytes[])'],

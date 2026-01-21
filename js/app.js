@@ -318,7 +318,7 @@ async function handleParse() {
     const nestedBytes = [];
     for (const item of decoded) {
       if (item.params) {
-        const nested = await findAndDecodeNestedBytes(item.params);
+        const nested = await findAndDecodeNestedBytes(item.params, '', item.functionName || '');
         nestedBytes.push(...nested);
       }
     }
@@ -382,7 +382,7 @@ async function handleMultiplePayloads(payloads, chainId, label, outputDiv) {
       // Collect nested bytes for each decoded result
       for (const item of decoded) {
         if (item.params) {
-          const nested = await findAndDecodeNestedBytes(item.params);
+          const nested = await findAndDecodeNestedBytes(item.params, '', item.functionName || '');
           allNestedBytes.push(...nested);
         }
       }

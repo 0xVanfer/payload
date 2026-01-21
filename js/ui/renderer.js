@@ -310,7 +310,9 @@ function renderRecursiveTable(decoded, explorerUrl) {
         <tbody>
   `;
   
-  for (const item of decoded) {
+  for (let i = 0; i < decoded.length; i++) {
+    const item = decoded[i];
+    
     // Build called address HTML with tracking
     let calledAddressHtml = '';
     if (item.calledAddress) {
@@ -324,10 +326,21 @@ function renderRecursiveTable(decoded, explorerUrl) {
       calledAddressHtml = `<div class="called-address" id="${addrElementId}" data-address="${address}"><span class="address-label">To:</span> ${link}</div>`;
     }
     
+    // Build operation info for multiSend transactions
+    let operationHtml = '';
+    if (item.operationName !== undefined) {
+      const opClass = item.operation === 1 ? 'operation-delegatecall' : 'operation-call';
+      operationHtml = `<div class="operation-info ${opClass}">${escapeHtml(item.operationName)}</div>`;
+    }
+    
+    // Transaction index for multiSend
+    const indexPrefix = decoded.length > 1 ? `<span class="tx-index">#${i + 1}</span> ` : '';
+    
     html += `
       <tr>
         <td class="col-function">
-          <div class="function-name">${escapeHtml(item.functionName || 'unknown')}</div>
+          <div class="function-name">${indexPrefix}${escapeHtml(item.functionName || 'unknown')}</div>
+          ${operationHtml}
           ${calledAddressHtml}
         </td>
         <td class="col-params">

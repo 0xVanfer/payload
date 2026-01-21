@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Safe MultiSend Integration Test</title>
+  <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js"></script>
+  <style>
+    body {
+      font-family: monospace;
+      padding: 20px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    .test-result {
+      margin: 10px 0;
+      padding: 10px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+    .test-result.pass {
+      background-color: #d4edda;
+      border-color: #28a745;
+    }
+    .test-result.fail {
+      background-color: #f8d7da;
+      border-color: #dc3545;
+    }
+    pre {
+      background: #f5f5f5;
+      padding: 10px;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    h2 {
+      border-bottom: 2px solid #333;
+      padding-bottom: 10px;
+    }
+    .section {
+      margin-bottom: 30px;
+    }
+    button {
+      padding: 10px 20px;
+      margin: 10px 5px 10px 0;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <h1>Safe MultiSend Integration Test</h1>
+  
+  <div class="section">
+    <h2>Integration Test</h2>
+    <p>This test verifies the complete decoding flow of multiSend(bytes):</p>
+    <ol>
+      <li>ABI decode the multiSend(bytes) function</li>
+      <li>Parse the bytes parameter using parseMultiSendPackedBytes</li>
+      <li>Decode the data field of each inner transaction</li>
+    </ol>
+    <button id="run-integration-test">Run Integration Test</button>
+  </div>
+
+  <div class="section">
+    <h2>Test Results</h2>
+    <div id="test-results"></div>
+  </div>
+
+  <script type="module">
+    import { parseMultiSendPackedBytes } from '../js/core/safe.js';
+    import { lookupSignature } from '../js/core/signature.js';
+    import { decodeWithSignature } from '../js/core/abi-utils.js';
+
+    document.getElementById('run-integration-test').addEventListener('click', async () => {
+      const resultsDiv = document.getElementById('test-results');
+      let html = '';
+      
+      try {
+        // Step 1: Create a multiSend(bytes) payload
+        html += '<div class="test-result pass"><strong>Step 1: Create multiSend(bytes) payload</strong></div>';
+        
+        // This packed bytes contains one transaction:
+        // operation: 0 (call)
+        // to: 0xd12f7e75598d6753849d06783a3735ff0d90895e  
+        // value: 0
+        // dataLength: 132 (0x84)
+        // data: upgradeAndCall(proxy, impl, data)
+        const packedBytes = '0x00d12f7e75598d6753849d06783a3735ff0d90895e000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000849623609d000000000000000000000000659195fb6c4d77cf116564cb6487d2effd60bce300000000000000000000000043506849d7c04f9138d1a2050bbf3a0c054402dd00000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000000';
+        
+        // Encode as multiSend(bytes)
+        const iface = new ethers.utils.Interface(['function multiSend(bytes transactions)']);
+        const fullPayload = iface.encodeFunctionData('multiSend', [packedBytes]);
+        
+        html += `<div class="test-result pass">
+          <strong>Full multiSend payload:</strong>
+          <pre>${fullPayload}</pre>
+        </div>`;
+        
+        // Step 2: Decode multiSend(bytes) using standard ABI
+        html += '<div class="test-result pass"><strong>Step 2: ABI decode multiSend(bytes)</strong></div>';
+        
+        const decoded = iface.decodeFunctionData('multiSend', fullPayload);
+        const transactionsBytes = decoded.transactions;
+        
+        html += `<div class="test-result pass">
+          <strong>Decoded bytes parameter:</strong>
+          <pre>${transactionsBytes}</pre>
+        </div>`;
+        
+        // Step 3: Parse packed bytes
+        html += '<div class="test-result pass"><strong>Step 3: Parse packed bytes</strong></div>';
+        
+        const transactions = parseMultiSendPackedBytes(transactionsBytes);
+        
+        html += `<div class="test-result pass">
+          <strong>Parse result: ${transactions.length} transaction(s)</strong>
+        </div>`;
+        
+        // Step 4: Decode each transaction
+        for (let i = 0; i < transactions.length; i++) {
+          const tx = transactions[i];
+          
+          html += `<div class="test-result pass">
+            <h4>Transaction #${i + 1}</h4>
+            <p><strong>Operation:</strong> ${tx.operationName} (${tx.operation})</p>
+            <p><strong>To:</strong> ${tx.address}</p>
+            <p><strong>Value:</strong> ${tx.value} wei</p>
+            <p><strong>Data:</strong> ${tx.data.slice(0, 66)}...</p>
+          </div>`;
+          
+          // Look up and decode the inner call
+          if (tx.data && tx.data.length >= 10) {
+            const selector = tx.data.slice(0, 10);
+            html += `<div class="test-result pass">
+              <p><strong>Selector:</strong> ${selector}</p>
+            </div>`;
+            
+            try {
+              const signature = await lookupSignature(tx.data);
+              if (signature) {
+                html += `<div class="test-result pass">
+                  <p><strong>Signature:</strong> ${signature}</p>
+                </div>`;
+                
+                const innerDecoded = decodeWithSignature(signature, tx.data);
+                if (innerDecoded && innerDecoded.params) {
+                  html += `<div class="test-result pass">
+                    <strong>Decoded parameters:</strong>
+                    <pre>${JSON.stringify(innerDecoded.params, null, 2)}</pre>
+                  </div>`;
+                }
+              } else {
+                html += `<div class="test-result fail">
+                  <p><strong>Signature not found</strong></p>
+                </div>`;
+              }
+            } catch (e) {
+              html += `<div class="test-result fail">
+                <p><strong>Decode error:</strong> ${e.message}</p>
+              </div>`;
+            }
+          }
+        }
+        
+        html += '<div class="test-result pass"><strong>✅ Integration test complete!</strong></div>';
+        
+      } catch (e) {
+        html += `<div class="test-result fail">
+          <strong>❌ Test failed:</strong>
+          <pre>${e.message}\n${e.stack}</pre>
+        </div>`;
+      }
+      
+      resultsDiv.innerHTML = html;
+    });
+  </script>
+</body>
+</html>

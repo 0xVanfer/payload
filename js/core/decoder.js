@@ -13,7 +13,7 @@ import {
   extractSelector 
 } from './abi-utils.js';
 import { lookupSignature } from './signature.js';
-import { processSafePayload, isExecTransaction, isMultiSend } from './safe.js';
+import { processSafePayload, isExecTransaction, isMultiSend, parseMultiSendPackedBytes } from './safe.js';
 import { parseMulticall, isMulticall } from './multicall.js';
 
 /**
@@ -201,15 +201,19 @@ async function decodePayload(payload, topLevelTo = null) {
  * 
  * @param {Array} params - The decoded parameters to search
  * @param {string} [parentPath=''] - The current path in the structure
+ * @param {string} [functionName=''] - The function name for context (e.g., to detect multiSend)
  * @returns {Promise<Array<{path: string, bytesValue: string, decoded: DecodedCall[]}>>} 
  *          Array of nested bytes with their decoded contents
  */
-async function findAndDecodeNestedBytes(params, parentPath = '') {
+async function findAndDecodeNestedBytes(params, parentPath = '', functionName = '') {
   const results = [];
   
   if (!Array.isArray(params)) {
     return results;
   }
+  
+  // Check if parent function is multiSend(bytes)
+  const isMultiSendFunction = functionName.toLowerCase().startsWith('multisend(bytes)');
   
   for (let i = 0; i < params.length; i++) {
     const param = params[i];
@@ -244,7 +248,7 @@ async function findAndDecodeNestedBytes(params, parentPath = '') {
             // Recursively decode any nested bytes in the result
             for (const item of decoded) {
               if (item.params) {
-                const nested = await findAndDecodeNestedBytes(item.params, `${path}[${j}]`);
+                const nested = await findAndDecodeNestedBytes(item.params, `${path}[${j}]`, item.functionName);
                 results.push(...nested);
               }
             }
@@ -257,25 +261,82 @@ async function findAndDecodeNestedBytes(params, parentPath = '') {
     }
     
     // Handle single bytes type (not bytes32)
-    if (/^bytes(?!32)/.test(param.AbiType) && isDecodableBytes(param.Value)) {
-      try {
-        log('debug', 'decoder', 'Decoding nested bytes', { path });
-        const decoded = await decodePayload(param.Value);
-        results.push({
-          path,
-          bytesValue: param.Value,
-          decoded
-        });
-        
-        // Recursively decode any nested bytes in the result
-        for (const item of decoded) {
-          if (item.params) {
-            const nested = await findAndDecodeNestedBytes(item.params, path);
-            results.push(...nested);
+    if (/^bytes(?!32)/.test(param.AbiType)) {
+      const bytesValue = param.Value;
+      
+      // Special handling for multiSend(bytes) - use packed encoding parser
+      if (isMultiSendFunction && i === 0) {
+        try {
+          log('info', 'decoder', 'Detected multiSend bytes parameter, using packed encoding parser', { path });
+          const packedTransactions = parseMultiSendPackedBytes(bytesValue);
+          
+          if (packedTransactions && packedTransactions.length > 0) {
+            // Decode each transaction's data
+            const decodedItems = [];
+            for (let j = 0; j < packedTransactions.length; j++) {
+              const tx = packedTransactions[j];
+              
+              // Create a call object for decoding
+              const call = {
+                address: tx.address,
+                value: tx.value,
+                data: tx.data
+              };
+              
+              // Decode the inner call
+              const decoded = await decodeSingleCall(call);
+              
+              // Add operation info to the result
+              decoded.operation = tx.operation;
+              decoded.operationName = tx.operationName;
+              
+              decodedItems.push(decoded);
+              
+              // Recursively decode any nested bytes in this transaction
+              if (decoded.params) {
+                const nestedResults = await findAndDecodeNestedBytes(decoded.params, `${path}[${j}]`, decoded.functionName);
+                results.push(...nestedResults);
+              }
+            }
+            
+            results.push({
+              path,
+              bytesValue,
+              decoded: decodedItems,
+              isMultiSendPacked: true
+            });
+            
+            continue;
           }
+        } catch (e) {
+          log('warn', 'decoder', 'Failed to parse multiSend packed bytes, falling back to standard decode', { 
+            path, 
+            error: e.message 
+          });
         }
-      } catch (e) {
-        log('warn', 'decoder', 'Failed to decode nested bytes', { path, error: e.message });
+      }
+      
+      // Standard bytes decoding
+      if (isDecodableBytes(bytesValue)) {
+        try {
+          log('debug', 'decoder', 'Decoding nested bytes', { path });
+          const decoded = await decodePayload(bytesValue);
+          results.push({
+            path,
+            bytesValue,
+            decoded
+          });
+          
+          // Recursively decode any nested bytes in the result
+          for (const item of decoded) {
+            if (item.params) {
+              const nested = await findAndDecodeNestedBytes(item.params, path, item.functionName);
+              results.push(...nested);
+            }
+          }
+        } catch (e) {
+          log('warn', 'decoder', 'Failed to decode nested bytes', { path, error: e.message });
+        }
       }
       continue;
     }
@@ -293,7 +354,7 @@ async function findAndDecodeNestedBytes(params, parentPath = '') {
         // Convert tuple array item to params format for recursion
         const tupleParams = parseTupleValue(arr[j], param.AbiType.replace(/\[\]$/, ''));
         if (tupleParams) {
-          const nested = await findAndDecodeNestedBytes(tupleParams, `${path}[${j}]`);
+          const nested = await findAndDecodeNestedBytes(tupleParams, `${path}[${j}]`, functionName);
           results.push(...nested);
         }
       }
@@ -304,7 +365,7 @@ async function findAndDecodeNestedBytes(params, parentPath = '') {
     if (/^tuple/.test(param.AbiType)) {
       const tupleParams = parseTupleValue(param.Value, param.AbiType);
       if (tupleParams) {
-        const nested = await findAndDecodeNestedBytes(tupleParams, path);
+        const nested = await findAndDecodeNestedBytes(tupleParams, path, functionName);
         results.push(...nested);
       }
     }

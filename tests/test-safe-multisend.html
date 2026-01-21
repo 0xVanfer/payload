@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Safe MultiSend Bytes Parser Test</title>
+  <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js"></script>
+  <style>
+    body {
+      font-family: monospace;
+      padding: 20px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    .test-result {
+      margin: 10px 0;
+      padding: 10px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+    .test-result.pass {
+      background-color: #d4edda;
+      border-color: #28a745;
+    }
+    .test-result.fail {
+      background-color: #f8d7da;
+      border-color: #dc3545;
+    }
+    pre {
+      background: #f5f5f5;
+      padding: 10px;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    h2 {
+      border-bottom: 2px solid #333;
+      padding-bottom: 10px;
+    }
+    .section {
+      margin-bottom: 30px;
+    }
+    textarea {
+      width: 100%;
+      height: 150px;
+      font-family: monospace;
+      font-size: 12px;
+    }
+    button {
+      padding: 10px 20px;
+      margin: 10px 5px 10px 0;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <h1>Safe MultiSend Bytes Parser Test</h1>
+  
+  <div class="section">
+    <h2>MultiSend Packed Encoding Format</h2>
+    <p>According to Safe contract code, the bytes parameter of multiSend(bytes) uses packed encoding:</p>
+    <ul>
+      <li><strong>operation</strong> (1 byte): 0 = call, 1 = delegatecall</li>
+      <li><strong>to</strong> (20 bytes): target address</li>
+      <li><strong>value</strong> (32 bytes): ETH amount</li>
+      <li><strong>dataLength</strong> (32 bytes): length of data</li>
+      <li><strong>data</strong> (dataLength bytes): call data</li>
+    </ul>
+    <p>Multiple transactions are concatenated without separators.</p>
+  </div>
+
+  <div class="section">
+    <h2>Test Input</h2>
+    <p>Paste the bytes parameter decoded from multiSend(bytes) (without function selector):</p>
+    <textarea id="bytes-input" placeholder="Paste bytes data, e.g.: 0x00d9db270c1b5e3bd161e8c8503c55ceabee709552..."></textarea>
+    <br>
+    <button id="parse-btn">Parse MultiSend Bytes</button>
+    <button id="test-btn">Run Unit Tests</button>
+  </div>
+
+  <div class="section">
+    <h2>Parse Results</h2>
+    <div id="parse-result"></div>
+  </div>
+
+  <div class="section">
+    <h2>Unit Test Results</h2>
+    <div id="test-results"></div>
+  </div>
+
+  <script type="module">
+    import { parseMultiSendPackedBytes } from '../js/core/safe.js';
+    
+    /**
+     * Attempt to decode the data field of each transaction
+     */
+    async function decodeTransactionData(data) {
+      if (!data || data === '0x' || data.length < 10) {
+        return { selector: null, functionName: null, decoded: null };
+      }
+      
+      const selector = data.slice(0, 10).toLowerCase();
+      
+      // Common function signatures
+      const commonSignatures = {
+        '0xa9059cbb': 'transfer(address,uint256)',
+        '0x095ea7b3': 'approve(address,uint256)',
+        '0x23b872dd': 'transferFrom(address,address,uint256)',
+        '0x8d80ff0a': 'multiSend(bytes)',
+        '0x6a761202': 'execTransaction(address,uint256,bytes,uint8,uint256,uint256,uint256,address,address,bytes)',
+        '0xe2b5a80e': 'executeBatch(address[],uint256[],bytes[])',
+        '0xc01a8c84': 'confirmTransaction(uint256)',
+        '0x40c10f19': 'mint(address,uint256)',
+        '0x42842e0e': 'safeTransferFrom(address,address,uint256)',
+        '0xa22cb465': 'setApprovalForAll(address,bool)',
+        '0x6f30fec5': 'withdraw(address)',
+        '0x2e1a7d4d': 'withdraw(uint256)',
+        '0xd0e30db0': 'deposit()',
+        '0x9623609d': 'upgradeAndCall(address,address,bytes)',
+      };
+      
+      const signature = commonSignatures[selector];
+      if (!signature) {
+        return { selector, functionName: null, decoded: null };
+      }
+      
+      try {
+        const iface = new ethers.utils.Interface([`function ${signature}`]);
+        const decoded = iface.decodeFunctionData(signature.split('(')[0], data);
+        return { 
+          selector, 
+          functionName: signature,
+          decoded: decoded.map((v, i) => ({
+            index: i,
+            value: v.toString()
+          }))
+        };
+      } catch (e) {
+        return { selector, functionName: signature, decoded: null, error: e.message };
+      }
+    }
+
+    // Parse button handler
+    document.getElementById('parse-btn').addEventListener('click', async () => {
+      const input = document.getElementById('bytes-input').value.trim();
+      const resultDiv = document.getElementById('parse-result');
+      
+      if (!input) {
+        resultDiv.innerHTML = '<p style="color: red;">Please enter bytes data</p>';
+        return;
+      }
+      
+      try {
+        const transactions = parseMultiSendPackedBytes(input);
+        
+        let html = `<p>Parsed <strong>${transactions.length}</strong> transaction(s):</p>`;
+        
+        for (let i = 0; i < transactions.length; i++) {
+          const tx = transactions[i];
+          const decoded = await decodeTransactionData(tx.data);
+          const dataLength = tx.data === '0x' ? 0 : (tx.data.length - 2) / 2;
+          const valueEth = ethers.utils.formatEther(tx.value);
+          
+          html += `
+            <div class="test-result pass">
+              <h4>Transaction #${i + 1}</h4>
+              <p><strong>Operation:</strong> ${tx.operationName} (${tx.operation})</p>
+              <p><strong>To:</strong> ${tx.address}</p>
+              <p><strong>Value:</strong> ${tx.value} wei (${valueEth} ETH)</p>
+              <p><strong>Data Length:</strong> ${dataLength} bytes</p>
+              <p><strong>Selector:</strong> ${decoded.selector || 'N/A'}</p>
+              <p><strong>Function:</strong> ${decoded.functionName || 'Unknown'}</p>
+              <pre><strong>Data:</strong> ${tx.data}</pre>
+              ${decoded.decoded ? `<pre><strong>Decoded:</strong> ${JSON.stringify(decoded.decoded, null, 2)}</pre>` : ''}
+              ${decoded.error ? `<p style="color: orange;"><strong>Decode Error:</strong> ${decoded.error}</p>` : ''}
+            </div>
+          `;
+        }
+        
+        resultDiv.innerHTML = html;
+      } catch (e) {
+        resultDiv.innerHTML = `<p style="color: red;">Parse error: ${e.message}</p><pre>${e.stack}</pre>`;
+      }
+    });
+
+    // Unit tests
+    document.getElementById('test-btn').addEventListener('click', async () => {
+      const resultsDiv = document.getElementById('test-results');
+      let html = '';
+      let passed = 0;
+      let failed = 0;
+
+      // Test 1: Single transaction
+      const test1 = (() => {
+        const testName = 'Test 1: Single call transaction';
+        try {
+          // Construct a packed bytes for a single call:
+          // operation: 0 (call)
+          // to: 0x1234567890123456789012345678901234567890
+          // value: 0
+          // dataLength: 4 (just a selector)
+          // data: 0xa9059cbb (transfer selector)
+          
+          const packed = '00' + // operation = call
+            '1234567890123456789012345678901234567890' + // to
+            '0000000000000000000000000000000000000000000000000000000000000000' + // value = 0
+            '0000000000000000000000000000000000000000000000000000000000000004' + // dataLength = 4
+            'a9059cbb'; // data
+          
+          const result = parseMultiSendPackedBytes(packed);
+          
+          if (result.length !== 1) {
+            throw new Error(`Expected 1 transaction, got ${result.length}`);
+          }
+          if (result[0].operation !== 0) {
+            throw new Error(`Expected operation 0, got ${result[0].operation}`);
+          }
+          if (result[0].address.toLowerCase() !== '0x1234567890123456789012345678901234567890') {
+            throw new Error(`Address mismatch: ${result[0].address}`);
+          }
+          if (result[0].value !== '0') {
+            throw new Error(`Expected value 0, got ${result[0].value}`);
+          }
+          if (result[0].data !== '0xa9059cbb') {
+            throw new Error(`Data mismatch: ${result[0].data}`);
+          }
+          
+          passed++;
+          return { name: testName, pass: true };
+        } catch (e) {
+          failed++;
+          return { name: testName, pass: false, error: e.message };
+        }
+      })();
+      
+      // Test 2: Two transactions
+      const test2 = (() => {
+        const testName = 'Test 2: Two call transactions';
+        try {
+          // First tx: call to address1, value=100, no data
+          // Second tx: delegatecall to address2, value=0, 68 bytes data
+          
+          const packed = 
+            // TX 1
+            '00' + // operation = call
+            'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' + // to
+            '0000000000000000000000000000000000000000000000000000000000000064' + // value = 100
+            '0000000000000000000000000000000000000000000000000000000000000000' + // dataLength = 0
+            // TX 2
+            '01' + // operation = delegatecall
+            'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' + // to
+            '0000000000000000000000000000000000000000000000000000000000000000' + // value = 0
+            '0000000000000000000000000000000000000000000000000000000000000044' + // dataLength = 68 (0x44)
+            'a9059cbb' + // transfer selector
+            '000000000000000000000000cccccccccccccccccccccccccccccccccccccccc' + // address param
+            '0000000000000000000000000000000000000000000000000000000000000001'; // uint256 param
+          
+          const result = parseMultiSendPackedBytes(packed);
+          
+          if (result.length !== 2) {
+            throw new Error(`Expected 2 transactions, got ${result.length}`);
+          }
+          
+          // Check TX 1
+          if (result[0].operation !== 0) {
+            throw new Error(`TX1: Expected operation 0, got ${result[0].operation}`);
+          }
+          if (result[0].value !== '100') {
+            throw new Error(`TX1: Expected value 100, got ${result[0].value}`);
+          }
+          if (result[0].data !== '0x') {
+            throw new Error(`TX1: Expected empty data, got ${result[0].data}`);
+          }
+          
+          // Check TX 2
+          if (result[1].operation !== 1) {
+            throw new Error(`TX2: Expected operation 1 (delegatecall), got ${result[1].operation}`);
+          }
+          if (result[1].data.length !== 2 + 68 * 2) { // 0x + 68 bytes in hex
+            throw new Error(`TX2: Expected data length 138 chars, got ${result[1].data.length}`);
+          }
+          
+          passed++;
+          return { name: testName, pass: true };
+        } catch (e) {
+          failed++;
+          return { name: testName, pass: false, error: e.message };
+        }
+      })();
+
+      // Test 3: With 0x prefix
+      const test3 = (() => {
+        const testName = 'Test 3: Handle 0x prefix';
+        try {
+          const packed = '0x00' + 
+            'dddddddddddddddddddddddddddddddddddddddd' + 
+            '0000000000000000000000000000000000000000000000000000000000000000' +
+            '0000000000000000000000000000000000000000000000000000000000000000';
+          
+          const result = parseMultiSendPackedBytes(packed);
+          
+          if (result.length !== 1) {
+            throw new Error(`Expected 1 transaction, got ${result.length}`);
+          }
+          
+          passed++;
+          return { name: testName, pass: true };
+        } catch (e) {
+          failed++;
+          return { name: testName, pass: false, error: e.message };
+        }
+      })();
+
+      // Test 4: Large value
+      const test4 = (() => {
+        const testName = 'Test 4: Large ETH value';
+        try {
+          // 1 ETH = 10^18 = 0xDE0B6B3A7640000
+          const packed = '00' + 
+            'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' + 
+            '0000000000000000000000000000000000000000000000000de0b6b3a7640000' + // 1 ETH
+            '0000000000000000000000000000000000000000000000000000000000000000';
+          
+          const result = parseMultiSendPackedBytes(packed);
+          
+          if (result.length !== 1) {
+            throw new Error(`Expected 1 transaction, got ${result.length}`);
+          }
+          if (result[0].value !== '1000000000000000000') {
+            throw new Error(`Expected value 1000000000000000000, got ${result[0].value}`);
+          }
+          
+          passed++;
+          return { name: testName, pass: true };
+        } catch (e) {
+          failed++;
+          return { name: testName, pass: false, error: e.message };
+        }
+      })();
+
+      // Render results
+      const tests = [test1, test2, test3, test4];
+      for (const test of tests) {
+        html += `
+          <div class="test-result ${test.pass ? 'pass' : 'fail'}">
+            <strong>${test.pass ? '✅' : '❌'} ${test.name}</strong>
+            ${test.error ? `<p style="color: red;">Error: ${test.error}</p>` : ''}
+          </div>
+        `;
+      }
+      
+      html += `<p><strong>Results: ${passed} passed, ${failed} failed</strong></p>`;
+      resultsDiv.innerHTML = html;
+    });
+
+    // Export function to window for debugging
+    window.parseMultiSendPackedBytes = parseMultiSendPackedBytes;
+    window.decodeTransactionData = decodeTransactionData;
+  </script>
+</body>
+</html>
